@@ -132,7 +132,8 @@
         ;; Remove link ids for links that were deleted from text
         (doseq [title removed-titles]
           (state/remove-link-id! title))
-        (block/update-block-content block-id text))))
+        (block/update-block-content block-id text)))) 
+  (reset! state/is-updated true)
   (cursor-in-double-brackets controller))
 
 (defn on-select-search-item [selected-title selected-id]
