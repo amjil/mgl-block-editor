@@ -105,7 +105,6 @@
                                    (when target-id
                                      ;; If id exists, it's a note id, call note-tap-handler
                                      (when-let [handler @state/note-tap-handler]
-                                       (dart:core/print "in block-item ---")
                                        (handler {"id" target-id "title" target-title})))))
                   :on-tag-tap (fn [tag-data]
                                 (let [tag-name (:tag tag-data)]
@@ -115,3 +114,12 @@
                                       (handler {"tag" tag-name})))))
                   :text-color text-color}))))])))])))))
 
+
+(defn view []
+  (f/widget
+   :watch [is-loading state/is-loading]
+   (if (true? is-loading)
+     (m/Center
+      .child
+      (m/CircularProgressIndicator))
+     (reorderable-view))))

@@ -37,7 +37,7 @@
        .child
        (m/Stack
         .children
-        [(reorderable-view/reorderable-view)
+        [(reorderable-view/view)
          (meta/meta-box)
          (search-box/search-box)
          (keyboard/candidates-panel)

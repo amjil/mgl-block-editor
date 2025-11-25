@@ -46,6 +46,8 @@
 
 (def is-updated (atom false))
 
+(def is-loading (atom true))
+
 (defn register-search-handler! [handler]
   (reset! search-handler handler))
 
