@@ -108,179 +108,192 @@
        .alignment m.Alignment/topCenter)
       (m/Padding
        .padding (m/EdgeInsets.only .top 16))
-      (m/Container
-       .width (/ width 2)
-       .margin (m/EdgeInsets.only .bottom 16)
-       .decoration (m/BoxDecoration
-                    .color (m/Color.fromARGB 255 45 45 45)
-                    .borderRadius (m/BorderRadius.circular 16)
-                    .border (m/Border.all
-                             .color (m/Color.fromARGB 80 255 255 255)
-                             .width 1)
-                    .boxShadow [(m/BoxShadow
-                                 .color (m/Color.fromARGB 150 0 0 0)
-                                 .blurRadius 24
-                                 .offset (m/Offset. 0 10)
-                                 .spreadRadius 2)]))
-      (m/ClipRRect
-       .borderRadius (m/BorderRadius.circular 16))
-      (m/SingleChildScrollView
-       .scrollDirection m/Axis.horizontal)
-      (m/Padding
-       .padding (m/EdgeInsets.symmetric .horizontal 20 .vertical 16))
-      (m/Row
-       .mainAxisSize m/MainAxisSize.min
-       .crossAxisAlignment m/CrossAxisAlignment.start
+      (m/Stack
        .children
-       (let [sections
-             [
-              ;; Title
-              (m/Container
-               .padding (m/EdgeInsets.symmetric .horizontal 12 .vertical 8)
-               .decoration (m/BoxDecoration
-                            .color (m/Color.fromARGB 100 255 255 255)
-                            .borderRadius (m/BorderRadius.circular 8))
-               .child
-               (mgl/MongolText
-                "Block Properties"
-                .style (m/TextStyle.
-                        .color m/Colors.white
-                        .fontSize 16
-                        .fontWeight m/FontWeight.w600
-                        .letterSpacing 0.5)))
-              
-              (m/SizedBox .width 20)
-              
-              ;; Divider
-              (m/Container
-               .width 1
-               .color (m/Color.fromARGB 60 255 255 255))
-              
-              (m/SizedBox .width 20)
-              ;; Todo toggle section
-              (m/Container
-               .padding (m/EdgeInsets.symmetric .horizontal 4 .vertical 8)
-               .decoration (m/BoxDecoration
-                            .color (m/Color.fromARGB 50 255 255 255)
-                            .borderRadius (m/BorderRadius.circular 10))
-               .child
-               (m/Column
-                .mainAxisSize m/MainAxisSize.max
-                .crossAxisAlignment m/CrossAxisAlignment.center
-                .mainAxisAlignment m/MainAxisAlignment.spaceBetween
-                .children
-                [(mgl/MongolText
-                  "Todo"
-                  .style (m/TextStyle.
-                          .color m/Colors.white
-                          .fontSize 15
-                          .fontWeight m/FontWeight.w500))
-                 (m/SizedBox .width 12)
-                 (m/RotatedBox
-                  .quarterTurns -1
+       [;; Background overlay - click to close
+        (m/GestureDetector
+         .onTap (fn [] (reset! open-meta false))
+         .child
+         (m/Container
+          .width width
+          .height double/infinity
+          .color (m/Color.fromARGB 100 0 0 0)))
+        ;; box content
+        (f/widget
+         (m/Align
+          .alignment m.Alignment/topCenter)
+         (m/Container
+          .width (/ width 1.2)
+          .margin (m/EdgeInsets.only .bottom 16)
+          .decoration (m/BoxDecoration
+                       .color (m/Color.fromARGB 255 45 45 45)
+                       .borderRadius (m/BorderRadius.circular 16)
+                       .border (m/Border.all
+                                .color (m/Color.fromARGB 80 255 255 255)
+                                .width 1)
+                       .boxShadow [(m/BoxShadow
+                                    .color (m/Color.fromARGB 150 0 0 0)
+                                    .blurRadius 24
+                                    .offset (m/Offset. 0 10)
+                                    .spreadRadius 2)]))
+         (m/ClipRRect
+          .borderRadius (m/BorderRadius.circular 16))
+         (m/SingleChildScrollView
+          .scrollDirection m/Axis.horizontal)
+         (m/Padding
+          .padding (m/EdgeInsets.symmetric .horizontal 20 .vertical 16))
+         (m/Row
+          .mainAxisSize m/MainAxisSize.min
+          .crossAxisAlignment m/CrossAxisAlignment.start
+          .children
+          (let [sections
+                [;; Title
+                 (m/Container
+                  .padding (m/EdgeInsets.symmetric .horizontal 12 .vertical 8)
+                  .decoration (m/BoxDecoration
+                               .color (m/Color.fromARGB 100 255 255 255)
+                               .borderRadius (m/BorderRadius.circular 8))
                   .child
-                  (m/Switch
-                   .value (if (nil? is-todo) false is-todo)
-                   .activeColor (m/Color.fromARGB 255 100 181 246)
-                   .onChanged (fn [value]
-                                (when current-block-id
-                                  (swap! state/block-meta assoc-in [current-block-id "todo"] value))
-                                value)))]))
-              
-              (m/SizedBox .width 20)
-              
-              ;; Divider
-              (m/Container
-               .width 1
-               .color (m/Color.fromARGB 60 255 255 255))
-              
-              (m/SizedBox .width 20)
-              ;; Background color selector section
-              (m/Container
-               .padding (m/EdgeInsets.symmetric .horizontal 8 .vertical 8)
-               .decoration (m/BoxDecoration
-                            .color (m/Color.fromARGB 50 255 255 255)
-                            .borderRadius (m/BorderRadius.circular 10))
-               .child
-               (m/Row
-                .mainAxisSize m/MainAxisSize.min
-                .crossAxisAlignment m/CrossAxisAlignment.stretch
-                .children
-                (let [background-items
-                      [(mgl/MongolText
-                        "Background"
-                        .style (m/TextStyle.
-                                .color m/Colors.white
-                                .fontSize 15
-                                .fontWeight m/FontWeight.w500))
-                       (m/SizedBox .width 12)
-                       (m/Wrap
-                        .direction m/Axis.vertical
-                        .spacing 10
-                        .runSpacing 10
-                        .children
-                        (let [color-options [[0 0 0 0]
-                                             [255 255 235 238]
-                                             [255 232 245 233]
-                                             [255 227 242 253]
-                                             [255 255 243 224]
-                                             [255 243 229 245]
-                                             [255 255 224 178]
-                                             [255 225 245 254]]]
-                          (vec (map (fn [argb]
-                                      (let [color (color-utils/argb->color argb)
-                                            is-selected (= bg-color-argb argb)]
-                                        (m/GestureDetector
-                                         .onTap (fn []
-                                                  (when current-block-id
-                                                    (let [current-meta (or block-meta {})
-                                                          updated-meta (if (= argb color-utils/transparent-argb)
-                                                                         (dissoc current-meta "bg-color")
-                                                                         (assoc current-meta "bg-color" argb))]
-                                                      (state/set-block-meta! current-block-id updated-meta))))
-                                         .child
-                                         (m/AnimatedContainer
-                                          .duration (Duration .milliseconds 200)
-                                          .curve m/Curves.easeInOut
-                                          .width 44
-                                          .height 44
-                                          .decoration (m/BoxDecoration
-                                                       .color color
-                                                       .borderRadius (m/BorderRadius.circular 10)
-                                                       .border (if is-selected
-                                                                 (m/Border.all
-                                                                  .color (m/Color.fromARGB 255 100 181 246)
-                                                                  .width 3)
-                                                                 (m/Border.all
-                                                                  .color (m/Color.fromARGB 120 255 255 255)
-                                                                  .width 1.5))
-                                                       .boxShadow (if is-selected
-                                                                    [(m/BoxShadow
-                                                                      .color (m/Color.fromARGB 100 100 181 246)
-                                                                      .blurRadius 8
-                                                                      .offset (m/Offset. 0 2)
-                                                                      .spreadRadius 1)]
-                                                                    []))
-                                          .child (when (= argb color-utils/transparent-argb)
-                                                   (m/Center
-                                                    .child
-                                                    (m/Container
-                                                     .width 2
-                                                     .height 20
-                                                     .color (m/Color.fromARGB 150 255 255 255))))))))
-                                    color-options))))]]
-                  background-items)))
-              
-              (m/SizedBox .width 20)
-              
-              ;; Divider
-              (m/Container
-               .width 1
-               .color (m/Color.fromARGB 60 255 255 255))
-              
-              (m/SizedBox .width 20)
-              
-              ;; Text color selector section
-              (text-color-picker current-block-id block-meta text-color-argb)]]
-         sections)))
+                  (mgl/MongolText
+                   "Block Properties"
+                   .style (m/TextStyle.
+                           .color m/Colors.white
+                           .fontSize 16
+                           .fontWeight m/FontWeight.w600
+                           .letterSpacing 0.5)))
+
+                 (m/SizedBox .width 20)
+
+                 ;; Divider
+                 (m/Container
+                  .width 1
+                  .color (m/Color.fromARGB 60 255 255 255))
+
+                 (m/SizedBox .width 20)
+                 ;; Todo toggle section
+                 (m/Container
+                  .padding (m/EdgeInsets.symmetric .horizontal 4 .vertical 8)
+                  .decoration (m/BoxDecoration
+                               .color (m/Color.fromARGB 50 255 255 255)
+                               .borderRadius (m/BorderRadius.circular 10))
+                  .child
+                  (m/Column
+                   .mainAxisSize m/MainAxisSize.max
+                   .crossAxisAlignment m/CrossAxisAlignment.center
+                   .mainAxisAlignment m/MainAxisAlignment.spaceBetween
+                   .children
+                   [(mgl/MongolText
+                     "Todo"
+                     .style (m/TextStyle.
+                             .color m/Colors.white
+                             .fontSize 15
+                             .fontWeight m/FontWeight.w500))
+                    (m/SizedBox .width 12)
+                    (m/RotatedBox
+                     .quarterTurns -1
+                     .child
+                     (m/Switch
+                      .value (if (nil? is-todo) false is-todo)
+                      .activeColor (m/Color.fromARGB 255 100 181 246)
+                      .onChanged (fn [value]
+                                   (when current-block-id
+                                     (swap! state/block-meta assoc-in [current-block-id "todo"] value))
+                                   value)))]))
+
+                 (m/SizedBox .width 20)
+
+                 ;; Divider
+                 (m/Container
+                  .width 1
+                  .color (m/Color.fromARGB 60 255 255 255))
+
+                 (m/SizedBox .width 20)
+                 ;; Background color selector section
+                 (m/Container
+                  .padding (m/EdgeInsets.symmetric .horizontal 8 .vertical 8)
+                  .decoration (m/BoxDecoration
+                               .color (m/Color.fromARGB 50 255 255 255)
+                               .borderRadius (m/BorderRadius.circular 10))
+                  .child
+                  (m/Row
+                   .mainAxisSize m/MainAxisSize.min
+                   .crossAxisAlignment m/CrossAxisAlignment.stretch
+                   .children
+                   (let [background-items
+                         [(mgl/MongolText
+                           "Background"
+                           .style (m/TextStyle.
+                                   .color m/Colors.white
+                                   .fontSize 15
+                                   .fontWeight m/FontWeight.w500))
+                          (m/SizedBox .width 12)
+                          (m/Wrap
+                           .direction m/Axis.vertical
+                           .spacing 10
+                           .runSpacing 10
+                           .children
+                           (let [color-options [[0 0 0 0]
+                                                [255 255 235 238]
+                                                [255 232 245 233]
+                                                [255 227 242 253]
+                                                [255 255 243 224]
+                                                [255 243 229 245]
+                                                [255 255 224 178]
+                                                [255 225 245 254]]]
+                             (vec (map (fn [argb]
+                                         (let [color (color-utils/argb->color argb)
+                                               is-selected (= bg-color-argb argb)]
+                                           (m/GestureDetector
+                                            .onTap (fn []
+                                                     (when current-block-id
+                                                       (let [current-meta (or block-meta {})
+                                                             updated-meta (if (= argb color-utils/transparent-argb)
+                                                                            (dissoc current-meta "bg-color")
+                                                                            (assoc current-meta "bg-color" argb))]
+                                                         (state/set-block-meta! current-block-id updated-meta))))
+                                            .child
+                                            (m/AnimatedContainer
+                                             .duration (Duration .milliseconds 200)
+                                             .curve m/Curves.easeInOut
+                                             .width 44
+                                             .height 44
+                                             .decoration (m/BoxDecoration
+                                                          .color color
+                                                          .borderRadius (m/BorderRadius.circular 10)
+                                                          .border (if is-selected
+                                                                    (m/Border.all
+                                                                     .color (m/Color.fromARGB 255 100 181 246)
+                                                                     .width 3)
+                                                                    (m/Border.all
+                                                                     .color (m/Color.fromARGB 120 255 255 255)
+                                                                     .width 1.5))
+                                                          .boxShadow (if is-selected
+                                                                       [(m/BoxShadow
+                                                                         .color (m/Color.fromARGB 100 100 181 246)
+                                                                         .blurRadius 8
+                                                                         .offset (m/Offset. 0 2)
+                                                                         .spreadRadius 1)]
+                                                                       []))
+                                             .child (when (= argb color-utils/transparent-argb)
+                                                      (m/Center
+                                                       .child
+                                                       (m/Container
+                                                        .width 2
+                                                        .height 20
+                                                        .color (m/Color.fromARGB 150 255 255 255))))))))
+                                       color-options))))]]
+                     background-items)))
+
+                 (m/SizedBox .width 20)
+
+                 ;; Divider
+                 (m/Container
+                  .width 1
+                  .color (m/Color.fromARGB 60 255 255 255))
+
+                 (m/SizedBox .width 20)
+
+                 ;; Text color selector section
+                 (text-color-picker current-block-id block-meta text-color-argb)]]
+            sections)))]))
      (m/SizedBox))))
