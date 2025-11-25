@@ -44,6 +44,8 @@
                  :background "ᠠᠷᠥ᠎ᠶᠢᠨ ᠥᠩᠭᠡ"
                  :placeholder "ᠡᠨᠳᠡ ᠳᠠᠷᠤᠵᠤ ᠠᠭᠤᠯᠭ᠎ᠠ᠎ᠪᠠᠨ ᠣᠷᠣᠭᠤᠯᠤᠨ᠎ᠠ ᠤᠤ"}))
 
+(def is-updated (atom false))
+
 (defn register-search-handler! [handler]
   (reset! search-handler handler))
 
