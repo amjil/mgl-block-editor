@@ -3,10 +3,15 @@
    ["package:flutter/material.dart" :as m]
    ["package:mongol/mongol.dart" :as mgl]
    [cljd.flutter :as f]
+   [block-editor.utils.selection :as selection]
    [block-editor.state :as state]))
 
-(defn placeholder []
-  (f/widget 
-   (mgl/MongolText 
+(defn placeholder [idx controller]
+  (f/widget
+   (m/GestureDetector
+    .behavior m/HitTestBehavior.translucent
+    .onTap (partial selection/on-click-reorderable-item controller idx)
+    .onDoubleTap (partial selection/on-click-reorderable-item controller idx))
+   (mgl/MongolText
     (state/get-l10n :placeholder)
     .style (m/TextStyle .fontSize 16 .color (m.Colors/grey)))))

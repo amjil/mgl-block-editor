@@ -95,7 +95,7 @@
                   :on-tap (fn []
                             (selection/cursor-in-double-brackets controller))}))
               (if is-empty
-                (placeholder/placeholder)
+                (placeholder/placeholder idx controller)
                 (richtext-viewer/richtext-viewer
                  idx controller
                  block-content
