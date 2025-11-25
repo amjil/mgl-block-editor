@@ -43,10 +43,6 @@
            text-color (color-utils/argb->color text-color-argb)
            divider-color (or (.-dividerColor theme)
                              (-> theme .-colorScheme .-onSurface (.withOpacity 0.12)))]
-     (m/GestureDetector
-      .behavior m/HitTestBehavior.deferToChild
-      .onTap (partial selection/on-click-reorderable-item controller idx)
-      .onDoubleTap (partial selection/on-click-reorderable-item controller idx))
      (m/IntrinsicWidth)
      (m/Column
       .mainAxisAlignment m.MainAxisAlignment/spaceAround
@@ -101,6 +97,7 @@
               (if is-empty
                 (placeholder/placeholder)
                 (richtext-viewer/richtext-viewer
+                 idx controller
                  block-content
                  {:on-link-tap (fn [link-data]
                                  (let [target-id (:id link-data)
