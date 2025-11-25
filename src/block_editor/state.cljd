@@ -37,6 +37,12 @@
 (def font-family (atom "OyunQaganTig"))
 (def font-size (atom 18))
 
+;; L10n configuration
+(def l10n (atom {:text-color "ᠦᠰᠦᠭ᠎ᠦᠨ ᠦᠩᠭᠡ"
+                 :block-properties " ᠪᠠᠭᠴᠠ᠎ᠶᠢᠨ ᠲᠣᠳᠣᠷᠠᠭᠤᠯᠭ᠎ᠠ"
+                 :todo "ᠲᠥᠯᠥᠪᠯᠡᠭᠡ"
+                 :background "ᠠᠷᠥ᠎ᠶᠢᠨ ᠥᠩᠭᠡ"}))
+
 (defn register-search-handler! [handler]
   (reset! search-handler handler))
 
@@ -105,6 +111,15 @@
 ;; Get font size
 (defn get-font-size []
   @font-size)
+
+;; Set l10n configuration
+(defn set-l10n! [config]
+  (when config
+    (swap! l10n merge config)))
+
+;; Get l10n value
+(defn get-l10n [key]
+  (get @l10n key))
 
 ;; Set block level
 (defn set-block-level! [id level]

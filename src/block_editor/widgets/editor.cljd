@@ -13,7 +13,7 @@
 
 (defn editor
   ([] (editor {}))
-  ([{:keys [on-search on-note-tap on-tag-tap :font-family :font-size]}]
+  ([{:keys [on-search on-note-tap on-tag-tap :font-family :font-size :l10n]}]
    (when (fn? on-search)
      (state/register-search-handler! on-search))
    (when (fn? on-note-tap)
@@ -24,6 +24,8 @@
      (state/set-font-family! font-family))
    (when font-size
      (state/set-font-size! font-size))
+   (when l10n
+     (state/set-l10n! l10n))
    (when (empty? @state/ids)
      (block/init))
    (f/widget

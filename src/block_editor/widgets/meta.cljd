@@ -109,7 +109,7 @@
       .crossAxisAlignment m/CrossAxisAlignment.center
       .children
       [(mgl/MongolText
-        "Text Color"
+        (state/get-l10n :text-color)
         .style (m/TextStyle.
                 .color m/Colors.white
                 .fontSize 15
@@ -188,7 +188,7 @@
                                .borderRadius (m/BorderRadius.circular 8))
                   .child
                   (mgl/MongolText
-                   "Block Properties"
+                   (state/get-l10n :block-properties)
                    .style (m/TextStyle.
                            .color m/Colors.white
                            .fontSize 16
@@ -216,7 +216,7 @@
                    .mainAxisAlignment m/MainAxisAlignment.spaceBetween
                    .children
                    [(mgl/MongolText
-                     "Todo"
+                     (state/get-l10n :todo)
                      .style (m/TextStyle.
                              .color m/Colors.white
                              .fontSize 15
@@ -254,7 +254,7 @@
                    .children
                    (let [background-items
                          [(mgl/MongolText
-                           "Background"
+                           (state/get-l10n :background)
                            .style (m/TextStyle.
                                    .color m/Colors.white
                                    .fontSize 15
