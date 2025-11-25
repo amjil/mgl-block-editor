@@ -30,21 +30,22 @@
      :context ctx
      :let [block-id (nth ids idx)
            theme (-> m/Theme (.of ctx))]
-    :watch [block-content (f/$ (get (f/<! state/blocks) block-id))
-            is-todo (f/$ (get-in (f/<! state/block-meta) [block-id "todo"]))
-            bg-color-argb (f/$ (get-in (f/<! state/block-meta) [block-id "bg-color"]))
-            text-color-argb (f/$ (get-in (f/<! state/block-meta) [block-id "text-color"]))
-            level (f/$ (get (f/<! state/levels) block-id 0))
-            eidx (f/$ (f/<! state/edit-index))]
-    :let [is-editing (= eidx idx)
-          is-empty (empty? block-content)
-          is-child-block (not (zero? level))
-          bg-color (color-utils/argb->color bg-color-argb)
-          text-color (color-utils/argb->color text-color-argb)
-          divider-color (or (.-dividerColor theme)
-                            (-> theme .-colorScheme .-onSurface (.withOpacity 0.12)))]
+     :watch [block-content (f/$ (get (f/<! state/blocks) block-id))
+             is-todo (f/$ (get-in (f/<! state/block-meta) [block-id "todo"]))
+             bg-color-argb (f/$ (get-in (f/<! state/block-meta) [block-id "bg-color"]))
+             text-color-argb (f/$ (get-in (f/<! state/block-meta) [block-id "text-color"]))
+             level (f/$ (get (f/<! state/levels) block-id 0))
+             eidx (f/$ (f/<! state/edit-index))]
+     :let [is-editing (= eidx idx)
+           is-empty (empty? block-content)
+           is-child-block (not (zero? level))
+           bg-color (color-utils/argb->color bg-color-argb)
+           text-color (color-utils/argb->color text-color-argb)
+           divider-color (or (.-dividerColor theme)
+                             (-> theme .-colorScheme .-onSurface (.withOpacity 0.12)))]
      (m/GestureDetector
-      .onTap (partial selection/on-click-reorderable-item controller idx)
+      ;; disable tap to edit, because it will conflict with the link span tap
+      ;; .onTap (partial selection/on-click-reorderable-item controller idx)
       .onDoubleTap (partial selection/on-click-reorderable-item controller idx))
      (m/IntrinsicWidth)
      (m/Column
