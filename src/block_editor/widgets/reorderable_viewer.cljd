@@ -44,8 +44,8 @@
            divider-color (or (.-dividerColor theme)
                              (-> theme .-colorScheme .-onSurface (.withOpacity 0.12)))]
      (m/GestureDetector
-      ;; disable tap to edit, because it will conflict with the link span tap
-      ;; .onTap (partial selection/on-click-reorderable-item controller idx)
+      .behavior m/HitTestBehavior.deferToChild
+      .onTap (partial selection/on-click-reorderable-item controller idx)
       .onDoubleTap (partial selection/on-click-reorderable-item controller idx))
      (m/IntrinsicWidth)
      (m/Column
