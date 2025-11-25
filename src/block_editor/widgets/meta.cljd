@@ -136,7 +136,7 @@
       :let [block-meta (or block-meta {})
             is-todo (get block-meta "todo")
             bg-color-argb (get block-meta "bg-color")
-            text-color-argb (get block-meta "text-color")]
+            text-color-argb (get block-meta "text-color")] 
       (m/Align
        .alignment m.Alignment/topCenter)
       (m/Padding
@@ -266,47 +266,47 @@
                            .runSpacing 10
                            .children
                            (vec (map (fn [argb]
-                                         (let [color (color-utils/argb->color argb)
-                                               is-selected (= bg-color-argb argb)]
-                                           (m/GestureDetector
-                                            .onTap (fn []
-                                                     (when current-block-id
-                                                       (let [current-meta (or block-meta {})
-                                                             updated-meta (if (= argb color-utils/transparent-argb)
-                                                                            (dissoc current-meta "bg-color")
-                                                                            (assoc current-meta "bg-color" argb))]
-                                                         (state/set-block-meta! current-block-id updated-meta))))
-                                            .child
-                                            (m/AnimatedContainer
-                                             .duration (Duration .milliseconds 200)
-                                             .curve m/Curves.easeInOut
-                                             .width 44
-                                             .height 44
-                                             .decoration (m/BoxDecoration
-                                                          .color color
-                                                          .borderRadius (m/BorderRadius.circular 10)
-                                                          .border (if is-selected
-                                                                    (m/Border.all
-                                                                     .color (m/Color.fromARGB 255 100 181 246)
-                                                                     .width 3)
-                                                                    (m/Border.all
-                                                                     .color (m/Color.fromARGB 120 255 255 255)
-                                                                     .width 1.5))
-                                                          .boxShadow (if is-selected
-                                                                       [(m/BoxShadow
-                                                                         .color (m/Color.fromARGB 100 100 181 246)
-                                                                         .blurRadius 8
-                                                                         .offset (m/Offset. 0 2)
-                                                                         .spreadRadius 1)]
-                                                                       []))
-                                             .child (when (= argb color-utils/transparent-argb)
-                                                      (m/Center
-                                                       .child
-                                                       (m/Container
-                                                        .width 2
-                                                        .height 20
-                                                        .color (m/Color.fromARGB 150 255 255 255))))))))
-                                       background-color-options)))]]
+                                       (let [color (color-utils/argb->color argb)
+                                             is-selected (= bg-color-argb argb)]
+                                         (m/GestureDetector
+                                          .onTap (fn []
+                                                   (when current-block-id
+                                                     (let [current-meta (or block-meta {})
+                                                           updated-meta (if (= argb color-utils/transparent-argb)
+                                                                          (dissoc current-meta "bg-color")
+                                                                          (assoc current-meta "bg-color" argb))]
+                                                       (state/set-block-meta! current-block-id updated-meta))))
+                                          .child
+                                          (m/AnimatedContainer
+                                           .duration (Duration .milliseconds 200)
+                                           .curve m/Curves.easeInOut
+                                           .width 44
+                                           .height 44
+                                           .decoration (m/BoxDecoration
+                                                        .color color
+                                                        .borderRadius (m/BorderRadius.circular 10)
+                                                        .border (if is-selected
+                                                                  (m/Border.all
+                                                                   .color (m/Color.fromARGB 255 100 181 246)
+                                                                   .width 3)
+                                                                  (m/Border.all
+                                                                   .color (m/Color.fromARGB 120 255 255 255)
+                                                                   .width 1.5))
+                                                        .boxShadow (if is-selected
+                                                                     [(m/BoxShadow
+                                                                       .color (m/Color.fromARGB 100 100 181 246)
+                                                                       .blurRadius 8
+                                                                       .offset (m/Offset. 0 2)
+                                                                       .spreadRadius 1)]
+                                                                     []))
+                                           .child (when (= argb color-utils/transparent-argb)
+                                                    (m/Center
+                                                     .child
+                                                     (m/Container
+                                                      .width 2
+                                                      .height 20
+                                                      .color (m/Color.fromARGB 150 255 255 255))))))))
+                                     background-color-options)))]]
                      background-items)))
 
                  (m/SizedBox .width 20)
