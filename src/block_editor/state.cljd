@@ -39,9 +39,10 @@
 
 ;; L10n configuration
 (def l10n (atom {:text-color "ᠦᠰᠦᠭ᠎ᠦᠨ ᠦᠩᠭᠡ"
-                 :block-properties " ᠪᠠᠭᠴᠠ᠎ᠶᠢᠨ ᠲᠣᠳᠣᠷᠠᠭᠤᠯᠭ᠎ᠠ"
+                 :block-properties " ᠪᠠᠭᠴᠠ᠎ᠶᠢᠨ ᠲᠣᠳᠣᠷᠠᠭᠤᠯᠭ᠎ᠠ"
                  :todo "ᠲᠥᠯᠥᠪᠯᠡᠭᠡ"
-                 :background "ᠠᠷᠥ᠎ᠶᠢᠨ ᠥᠩᠭᠡ"}))
+                 :background "ᠠᠷᠥ᠎ᠶᠢᠨ ᠥᠩᠭᠡ"
+                 :placeholder "Please Text Here"}))
 
 (defn register-search-handler! [handler]
   (reset! search-handler handler))

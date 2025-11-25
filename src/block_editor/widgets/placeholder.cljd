@@ -2,10 +2,11 @@
   (:require 
    ["package:flutter/material.dart" :as m]
    ["package:mongol/mongol.dart" :as mgl]
-   [cljd.flutter :as f]))
+   [cljd.flutter :as f]
+   [block-editor.state :as state]))
 
 (defn placeholder []
   (f/widget 
    (mgl/MongolText 
-    "Please Text Here"
+    (state/get-l10n :placeholder)
     .style (m/TextStyle .fontSize 16 .color (m.Colors/grey)))))
