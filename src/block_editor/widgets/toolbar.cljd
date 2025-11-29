@@ -60,9 +60,6 @@
                   :on-press (fn []
                               (dart:core/print "toolbar: Link")
                               (link-page-fn))}
-                 {:display "#"
-                  :tooltip "Insert tag"
-                  :on-press (fn [] (dart:core/print "toolbar: Tag"))}
                  {:display "→"
                   :tooltip "Increase level (Indent)"
                   :on-press (fn []
