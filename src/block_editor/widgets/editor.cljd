@@ -44,3 +44,31 @@
          (todo/todo-selector-popup)]))
       (toolbar/toolbar)
       (keyboard/keyboard)]))))
+      
+
+(defn desktop-editor 
+  ([] (desktop-editor {}))
+  ([{:keys [on-search on-note-tap on-tag-tap :font-family :font-size :l10n]}]
+   (when (fn? on-search)
+     (state/register-search-handler! on-search))
+   (when (fn? on-note-tap)
+     (state/register-note-tap-handler! on-note-tap))
+   (when (fn? on-tag-tap)
+     (state/register-tag-tap-handler! on-tag-tap))
+   (when font-family
+     (state/set-font-family! font-family))
+   (when font-size
+     (state/set-font-size! font-size))
+   (when l10n
+     (state/set-l10n! l10n)) 
+   (when (empty? @state/ids)
+     (block/init))
+   (f/widget 
+     (m/SafeArea)
+     (m/Center)
+     (m/Stack 
+      .children 
+      [(reorderable-view/view)
+       (meta/meta-box)
+       (search-box/search-box)
+       (todo/todo-selector-popup)]))))

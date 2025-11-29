@@ -71,7 +71,8 @@
   (reset! s/levels {}))
 
 (defn init []
-  (create-block 0))
+  (create-block 0)
+  (reset! s/is-loading false))
 
 (defn- valid-edit-index? []
   (and (not= -1 @s/edit-index)
