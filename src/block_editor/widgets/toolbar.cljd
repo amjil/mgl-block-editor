@@ -40,11 +40,11 @@
      .child (m/Text display)))))
 
 (defn toolbar []
-  (let [actions [{:display "M"
-                  :tooltip "Block Properties"
-                  :on-press (fn []
-                              (dart:core/print "toolbar: Meta")
-                              (swap! meta/open-meta not))}
+  (let [actions [;{:display "M"
+                 ; :tooltip "Block Properties"
+                 ;:on-press (fn []
+                 ;             (dart:core/print "toolbar: Meta")
+                 ;             (swap! meta/open-meta not)
                  {:display "B"
                   :tooltip "Bold"
                   :on-press (fn []

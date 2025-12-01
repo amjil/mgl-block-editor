@@ -7,7 +7,6 @@
    [block-editor.widgets.toolbar :as toolbar]
    [block-editor.widgets.search-box :as search-box]
    [block-editor.widgets.meta :as meta]
-   [block-editor.widgets.todo :as todo]
    [block-editor.state :as state]
    [block-editor.utils.block :as block]))
 
@@ -40,8 +39,8 @@
         [(reorderable-view/view)
          (meta/meta-box)
          (search-box/search-box)
-         (keyboard/candidates-panel)
-         (todo/todo-selector-popup)]))
+         (keyboard/candidates-panel)]))
+         
       (toolbar/toolbar)
       (keyboard/keyboard)]))))
       
@@ -70,5 +69,4 @@
       .children 
       [(reorderable-view/view)
        (meta/meta-box)
-       (search-box/search-box)
-       (todo/todo-selector-popup)]))))
+       (search-box/search-box)]))))
