@@ -8,7 +8,9 @@
    [block-editor.utils.block :as block]
    [block-editor.widgets.meta :as meta]))
    
-(declare link-page-fn)
+(declare link-page-fn
+         bold-fn 
+         italic-fn)
 
 (def button-style
   (m/OutlinedButton.styleFrom
@@ -49,12 +51,12 @@
                   :tooltip "Bold"
                   :on-press (fn []
                               (dart:core/print "toolbar: Bold")
-                              (reset! state/open-search-box true))}
+                              (bold-fn))}
                  {:display "I"
                   :tooltip "Italic"
                   :on-press (fn []
                               (dart:core/print "toolbar: Italic")
-                              (reset! state/open-search-box false))}
+                              (italic-fn))}
                  {:display "[[ ]]"
                   :tooltip "Insert link"
                   :on-press (fn []
@@ -99,3 +101,12 @@
 (defn link-page-fn []
   (control/insert-text "[[]]")
   (control/update-selection -2))
+  
+(defn bold-fn []
+  (control/insert-text "****")
+  (control/update-selection -2))
+  
+(defn italic-fn []
+  (control/insert-text "**")
+  (control/update-selection -1))
+  
