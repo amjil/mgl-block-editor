@@ -1,0 +1,11 @@
+{:paths ["src"]
+ :deps {tensegritics/clojuredart
+        {:git/url "https://github.com/tensegritics/ClojureDart.git"
+         :sha "4ee792f3044589c96b019c2a86db9b23f1b283ab"}
+
+        amjil/mgl-block-editor
+        {:local/root "../"}}
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+ :cljd/opts {:kind :flutter
+             :main block-editor-example.main}}
+

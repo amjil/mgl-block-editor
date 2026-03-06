@@ -1,146 +1,27 @@
 (ns block-editor.state
-  (:require
-   [clojure.string :as str]
-   [clojure.set :as set]))
+  (:require ["package:flutter/services.dart" :as s]
+            [rich-editor.model.node :as node]
+            [rich-editor.defaults :as defaults]))
 
-;; block ids vector
-(def ids (atom []))
+(defn- new-id []
+  (str "b-" (.-millisecondsSinceEpoch (dart:core/DateTime.now))))
 
-(def blocks (atom {}))
+(defn initial-state
+  "Create an initial rich-editor compatible state.
 
-;; Block level mapping: id -> level (default 0)
-(def levels (atom {}))
+  Notes:
+  - We keep the same top-level keys used by rich-editor (:blocks, :root, :active-block-id, etc.)
+  - :editor-config is set by the widget when mounted (merged defaults + user config).
+  - Initial block gets a collapsed :selection at 0 so MglSelectableText can show the caret."
+  ([] (initial-state nil))
+  ([{:keys [block-type initial-content] :or {block-type :paragraph initial-content ""}}]
+   (let [id (new-id)
+         block (-> (node/make-node id block-type initial-content)
+                  (assoc :selection (s/TextSelection. .baseOffset 0 .extentOffset 0)))]
+     {:blocks {id block}
+      :root [id]
+      :active-block-id id
+      :cursor-visible true
+      :editor-config defaults/full-default-config
+      :history {:undo-stack [] :redo-stack [] :max-depth 100 :last-edit-time 0}})))
 
-(def block-meta (atom {}))
-
-(def current-id (atom nil))
-
-(def search-result (atom []))
-                          
-(def search-query (atom ""))
-
-(def open-search-box (atom false))
-
-(def edit-index (atom -1))
-                          
-
-(def search-handler (atom nil))
-
-(def note-tap-handler (atom nil))
-
-(def tag-tap-handler (atom nil))
-
-;; Link title -> id mapping table
-(def link-ids (atom {}))
-
-;; Font configuration
-(def font-family (atom "OyunQaganTig"))
-(def font-size (atom 18))
-
-;; L10n configuration
-(def l10n (atom {:text-color "ᠦᠰᠦᠭ᠎ᠦᠨ ᠦᠩᠭᠡ"
-                 :block-properties " ᠪᠠᠭᠴᠠ᠎ᠶᠢᠨ ᠲᠣᠳᠣᠷᠠᠭᠤᠯᠭ᠎ᠠ"
-                 :todo "ᠲᠥᠯᠥᠪᠯᠡᠭᠡ"
-                 :background "ᠠᠷᠥ᠎ᠶᠢᠨ ᠥᠩᠭᠡ"
-                 :placeholder "ᠡᠨᠳᠡ ᠳᠠᠷᠤᠵᠤ ᠠᠭᠤᠯᠭ᠎ᠠ᠎ᠪᠠᠨ ᠣᠷᠣᠭᠤᠯᠤᠨ᠎ᠠ ᠤᠤ"}))
-
-(def is-updated (atom false))
-
-(def is-loading (atom true))
-
-(defn register-search-handler! [handler]
-  (reset! search-handler handler))
-
-(defn register-note-tap-handler! [handler]
-  (reset! note-tap-handler handler))
-
-(defn register-tag-tap-handler! [handler]
-  (reset! tag-tap-handler handler))
-
-;; Set link id
-(defn set-link-id! [title id]
-  (when (and title id (not-empty title) (not-empty id))
-    (swap! link-ids assoc title id)))
-
-;; Get link id
-(defn get-link-id [title]
-  (get @link-ids title))
-
-;; Remove link id
-(defn remove-link-id! [title]
-  (swap! link-ids dissoc title))
-
-;; Extract all link titles from text
-(defn extract-link-titles [text]
-  (let [link-pattern "\\[\\[([^#\\]]+)(?:#([^\\]]+))?\\]\\]"
-        matches (.allMatches (RegExp. link-pattern) text)]
-    (set (map #(.group % 1) matches))))
-
-;; Clean up link ids that are no longer in any block
-(defn cleanup-unused-link-ids! []
-  (let [all-blocks (vals @blocks)
-        all-text (str/join "\n" all-blocks)
-        used-titles (extract-link-titles all-text)
-        current-titles (set (keys @link-ids))
-        unused-titles (set/difference current-titles used-titles)]
-    (doseq [title unused-titles]
-      (remove-link-id! title))))
-
-(defn set-search-results! [results]
-  (let [normalized (cond
-                     (nil? results) []
-                     (vector? results) results
-                     :else (if-let [s (seq results)]
-                             (vec s)
-                             (vec [results])))]
-    (reset! search-result normalized)))
-
-(defn clear-search! []
-  (reset! search-query "")
-  (reset! search-result []))
-
-;; Set font family
-(defn set-font-family! [family]
-  (when family
-    (reset! font-family family)))
-
-;; Set font size
-(defn set-font-size! [size]
-  (when size
-    (reset! font-size size)))
-
-;; Get font family
-(defn get-font-family []
-  @font-family)
-
-;; Get font size
-(defn get-font-size []
-  @font-size)
-
-;; Set l10n configuration
-(defn set-l10n! [config]
-  (when config
-    (swap! l10n merge config)))
-
-;; Get l10n value
-(defn get-l10n [key]
-  (get @l10n key))
-
-;; Set block level
-(defn set-block-level! [id level]
-  (when (and id (some? level))
-    (swap! levels assoc id level)))
-
-;; Get block level (default 0 if not set)
-(defn get-block-level [id]
-  (get @levels id 0))
-  
-
-;; Set block meta
-(defn set-block-meta! [id meta]
-  (when (and id (some? meta))
-    (swap! block-meta assoc id meta)))
-
-;; Get block meta
-(defn get-block-meta [id]
-  (get @block-meta id))

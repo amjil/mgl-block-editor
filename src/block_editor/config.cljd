@@ -1,0 +1,48 @@
+(ns block-editor.config
+  (:require [rich-editor.config :as rich-config]
+            [rich-editor.commands.editor-commands :as editor-cmd]
+            [rich-editor.defaults :as rich-defaults]
+            [block-editor.commands.block-commands :as block-cmd]))
+
+(defn block-command-handlers
+  "Additional command handlers for block-editor layer.
+  These are merged into rich-editor's default command registry."
+  []
+  {:insert-block-after (fn [!state]
+                         (let [active-id (:active-block-id @!state)
+                               new-id (block-cmd/insert-block-after! !state active-id)]
+                           (when new-id
+                             (editor-cmd/focus-block !state new-id 0))))
+   :delete-block (fn [!state]
+                   (when-let [active-id (:active-block-id @!state)]
+                     (block-cmd/delete-block! !state active-id)))
+   :move-block-up (fn [!state] (block-cmd/move-active-up! !state))
+   :move-block-down (fn [!state] (block-cmd/move-active-down! !state))})
+
+(defn block-ops
+  "Hooks used by rich-editor to delegate block-level behavior.
+  Injected into :editor-config so rich-editor can remain block-agnostic."
+  []
+  {:split-block-at-cursor! (fn [!state block-id] (block-cmd/split-block-at-cursor! !state block-id))
+   :merge-with-previous! (fn [!state block-id] (block-cmd/merge-with-previous! !state block-id))
+   :delete-cross-block-selection! (fn [!state g-sel] (block-cmd/delete-cross-block-selection! !state g-sel))
+   :indent-selection! (fn [!state delta-val] (block-cmd/indent-selection! !state delta-val))
+   :paste-when-no-focus! (fn [!state raw-text] (block-cmd/paste-when-no-focus! !state raw-text))})
+
+(defn merge-config
+  "Merge user-config into base rich-editor config and register block-editor commands.
+  Returned config is compatible with rich-editor components."
+  ([user-config]
+   (merge-config rich-defaults/full-default-config user-config))
+  ([base user-config]
+   (let [base (or base rich-defaults/full-default-config)
+         cfg (rich-config/merge-config base (or user-config {}))
+         rich-cmds (:commands base)
+         block-cmds (block-command-handlers)
+         user-cmds (get user-config :commands {})
+         merged (merge rich-cmds block-cmds user-cmds)
+         base-ops (get base :block-ops {})
+         user-ops (get user-config :block-ops {})
+         merged-ops (merge base-ops (block-ops) user-ops)]
+     (assoc cfg :commands merged :block-ops merged-ops))))
+

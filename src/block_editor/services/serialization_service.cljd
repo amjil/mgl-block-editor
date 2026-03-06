@@ -1,0 +1,8 @@
+(ns block-editor.services.serialization-service
+  (:require [rich-editor.services.serialization-service :as rich-ser]))
+
+(def export-state rich-ser/export-state)
+(def import-from-map rich-ser/import-from-map)
+(def load-state! rich-ser/load-state!)
+(def replace-state! rich-ser/replace-state!)
+

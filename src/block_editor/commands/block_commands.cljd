@@ -1,0 +1,292 @@
+(ns block-editor.commands.block-commands
+  "Block-level operations: split, merge, reorder, cross-block delete, indent, paste.
+   Ported from mgl-richtext-editor; depends only on rich-editor model and text-commands."
+  (:require [rich-editor.model.node :as node]
+            [rich-editor.model.delta :as delta]
+            [rich-editor.model.transaction :as tx]
+            [rich-editor.model.selection :as sel]
+            [rich-editor.config :as config]
+            [rich-editor.commands.text-commands :as text-cmd]
+            [rich-editor.commands.editor-commands :as editor-cmd]
+            ["package:flutter/services.dart" :as s]))
+
+(defn- now-id []
+  (str "b-" (.-millisecondsSinceEpoch (dart:core/DateTime.now))))
+
+(defn- default-block-type-from-state [!state]
+  (or (some-> (get @!state :editor-config) config/default-block-type) :paragraph))
+
+;; =============================================================
+;; Insert / delete block
+;; =============================================================
+
+(defn insert-block-after!
+  "Insert a new empty text block after `after-id` (or append if nil).
+  Returns the new block id."
+  [!state after-id]
+  (let [state @!state
+        root (:root state)
+        idx (if after-id (inc (.indexOf root after-id)) (count root))
+        idx (max 0 (min idx (count root)))
+        new-id (now-id)
+        new-block (node/make-node new-id (default-block-type-from-state !state) "")]
+    (tx/commit-transaction! !state
+      (tx/make-transaction
+        :ops [(tx/insert-op :root idx [new-block])]
+        :after-selection nil)
+      :merge? false)
+    new-id))
+
+(defn delete-block!
+  "Delete a block from :root. If it is the active block, focus moves to the nearest neighbor.
+  No-op if document would become empty."
+  [!state block-id]
+  (let [state @!state
+        root (:root state)
+        n (count root)
+        idx (.indexOf root block-id)]
+    (when (and (>= idx 0) (> n 1))
+      (let [next-focus-id (cond
+                            (< idx (dec n)) (nth root (inc idx))
+                            (> idx 0) (nth root (dec idx))
+                            :else nil)]
+        (tx/commit-transaction! !state
+          (tx/make-transaction
+            :ops [(tx/delete-op :root idx 1)]
+            :after-selection nil)
+          :merge? false)
+        (swap! !state update :blocks dissoc block-id)
+        (when next-focus-id
+          (editor-cmd/focus-block !state next-focus-id 0))
+        true))))
+
+(defn insert-block-at-end!
+  "Insert new block at document end (e.g. paste when no focus). Returns nil."
+  [!state new-block]
+  (let [state @!state
+        root (:root state)
+        idx (count root)]
+    (tx/commit-transaction! !state
+      (tx/make-transaction
+        :ops [(tx/insert-op :root idx [new-block])]
+        :after-selection nil))
+    nil))
+
+;; =============================================================
+;; Split / merge at cursor (Enter / Backspace)
+;; =============================================================
+
+(defn split-block-at-cursor!
+  "Enter: split block at cursor. Returns new block id."
+  [!state block-id]
+  (let [state @!state
+        block (get-in state [:blocks block-id])
+        content (or (:content block) "")
+        selection (:selection block)
+        offset (if selection (.-extentOffset selection) 0)
+        offset (max 0 (min offset (count content)))
+        text-before (subs content 0 offset)
+        text-after (subs content offset)
+        new-id (now-id)
+        new-block (node/make-node new-id (default-block-type-from-state !state) text-after)
+        root (:root state)
+        current-index (.indexOf root block-id)]
+    (tx/commit-transaction! !state
+      (tx/make-transaction
+        :ops [(tx/update-content-op block-id
+                (delta/make-delta [(delta/retain 0)
+                                  (delta/delete (count content))
+                                  (delta/insert text-before)]))
+              (tx/insert-op :root (inc current-index) [new-block])]
+        :after-selection nil)
+      :merge? false)
+    new-id))
+
+(defn merge-with-previous!
+  "Backspace at block start: merge current block into previous. Returns {:prev-id :new-offset} or nil."
+  [!state block-id]
+  (let [state @!state
+        root (:root state)
+        current-idx (.indexOf root block-id)]
+    (when (> current-idx 0)
+      (let [prev-id (nth root (dec current-idx))
+            prev-block (get-in state [:blocks prev-id])
+            curr-block (get-in state [:blocks block-id])
+            prev-content (or (:content prev-block) "")
+            curr-content (or (:content curr-block) "")
+            new-offset (count prev-content)]
+        (tx/commit-transaction! !state
+          (tx/make-transaction
+            :ops [(tx/update-content-op prev-id
+                    (delta/make-delta [(delta/retain new-offset) (delta/insert curr-content)]))
+                  (tx/delete-op :root current-idx 1)]
+            :after-selection (s/TextSelection. .baseOffset new-offset .extentOffset new-offset))
+          :merge? false)
+        {:prev-id prev-id :new-offset new-offset}))))
+
+;; =============================================================
+;; Cross-block deletion
+;; =============================================================
+
+(defn delete-cross-block-selection!
+  "Delete cross-block selection. Returns {:focus-block id :offset n} for refocus."
+  [!state global-selection]
+  (let [state @!state
+        n-sel (sel/normalize state global-selection)
+        start-pos (:start n-sel)
+        end-pos (:end n-sel)
+        start-id (:id start-pos)
+        end-id (:id end-pos)
+        start-off (or (:offset start-pos) 0)
+        end-off (or (:offset end-pos) 0)]
+    (if (= start-id end-id)
+      (do
+        (text-cmd/delete-range !state start-id start-off (- end-off start-off))
+        {:focus-block start-id :offset start-off})
+      (let [root (:root state)
+            start-idx (.indexOf root start-id)
+            end-idx (.indexOf root end-id)
+            start-content (or (:content (get-in state [:blocks start-id])) "")
+            end-content (or (:content (get-in state [:blocks end-id])) "")
+            remaining-end-text (if (<= end-off (count end-content))
+                               (subs end-content end-off)
+                               "")
+            middle-ops (for [i (range (dec end-idx) start-idx -1)]
+                         (tx/delete-op :root i 1))
+            del-len (- (count start-content) start-off)
+            start-delta (delta/make-delta
+                         (cond-> [(delta/retain start-off)]
+                           (> del-len 0) (conj (delta/delete del-len))
+                           (pos? (count remaining-end-text)) (conj (delta/insert remaining-end-text))))
+            update-start-op (tx/update-content-op start-id start-delta)
+            delete-end-op (tx/delete-op :root end-idx 1)
+            ops (concat [update-start-op delete-end-op] middle-ops)
+            after-sel (s/TextSelection. .baseOffset start-off .extentOffset start-off)]
+        (tx/commit-transaction! !state
+          (tx/make-transaction :ops (vec ops) :after-selection after-sel)
+          :merge? false)
+        {:focus-block start-id :offset start-off}))))
+
+;; =============================================================
+;; Reorder
+;; =============================================================
+
+(defn move-block-up! [!state block-id]
+  (let [state @!state
+        root (:root state)
+        idx (.indexOf root block-id)]
+    (when (> idx 0)
+      (tx/commit-transaction! !state
+        (tx/make-transaction
+          :ops [(tx/delete-op :root idx 1)
+                (tx/insert-op :root (dec idx) [(get-in state [:blocks block-id])])]
+          :after-selection (:selection (get-in state [:blocks block-id])))))))
+
+(defn move-block-down! [!state block-id]
+  (let [state @!state
+        root (:root state)
+        idx (.indexOf root block-id)
+        n (count root)]
+    (when (and (< idx (dec n)) (>= n 1))
+      (tx/commit-transaction! !state
+        (tx/make-transaction
+          :ops [(tx/delete-op :root idx 1)
+                (tx/insert-op :root (inc idx) [(get-in state [:blocks block-id])])]
+          :after-selection (:selection (get-in state [:blocks block-id])))))))
+
+(defn reorder-blocks!
+  "Reorder :root blocks (Flutter ReorderableListView callback)."
+  [!state old-index new-index]
+  (let [state @!state
+        root (:root state)
+        n (count root)
+        old-index (int old-index)
+        new-index (int new-index)
+        insert-index (if (> new-index old-index) (dec new-index) new-index)
+        insert-index (max 0 (min insert-index n))]
+    (when (and (>= old-index 0) (< old-index n))
+      (let [block-id (nth root old-index)
+            block (get-in state [:blocks block-id])]
+        (tx/commit-transaction! !state
+          (tx/make-transaction
+            :ops [(tx/delete-op :root old-index 1)
+                  (tx/insert-op :root insert-index [block])]
+            :after-selection nil))))))
+
+;; =============================================================
+;; Indent / image / paste (block-ops hooks)
+;; =============================================================
+
+(defn indent-selection!
+  "Tab / Shift+Tab: delta-val 1 or -1."
+  [!state delta-val]
+  (let [state @!state
+        g-sel (:global-selection state)
+        target-ids (if g-sel
+                     (let [n-sel (sel/normalize state g-sel)
+                           start-id (get-in n-sel [:start :id])
+                           end-id (get-in n-sel [:end :id])
+                           root (:root state)
+                           start-idx (.indexOf root start-id)
+                           end-idx (.indexOf root end-id)]
+                       (subvec root start-idx (inc end-idx)))
+                     (if-let [active-id (:active-block-id state)]
+                       [active-id]
+                       []))]
+    (when (seq target-ids)
+      (swap! !state
+             (fn [s]
+               (reduce
+                (fn [acc id]
+                  (let [curr-indent (get-in acc [:blocks id :attributes :indent] 0)
+                        new-indent (max 0 (min 8 (+ curr-indent delta-val)))]
+                    (assoc-in acc [:blocks id :attributes :indent] new-indent)))
+                s
+                target-ids))))
+    nil))
+
+(defn insert-image-block!
+  "Insert image block after block-id; if after-block-id nil, append to document."
+  ([!state url] (insert-image-block! !state url nil))
+  ([!state url after-block-id]
+  (let [state @!state
+        root (:root state)
+        new-id (now-id)
+        image-block (assoc (node/make-node new-id :image "" [] {}) :data {:url url})
+        idx (if after-block-id
+              (inc (.indexOf root after-block-id))
+              (count root))
+        idx (max 0 (min idx (count root)))]
+    (tx/commit-transaction! !state
+      (tx/make-transaction
+        :ops [(tx/insert-op :root idx [image-block])]
+        :after-selection nil)))))
+
+(defn paste-when-no-focus!
+  "Hook for rich-editor clipboard: create a new block when there is no active focus.
+  Returns {:focus-block id :offset 0}."
+  [!state raw-text]
+  (let [new-id (now-id)
+        new-block (node/make-node new-id (default-block-type-from-state !state) raw-text)]
+    (insert-block-at-end! !state new-block)
+    {:focus-block new-id :offset 0}))
+
+;; =============================================================
+;; Convenience (active-block-id)
+;; =============================================================
+
+(defn split-active-block! [!state]
+  (when-let [id (:active-block-id @!state)]
+    (split-block-at-cursor! !state id)))
+
+(defn merge-active-with-previous! [!state]
+  (when-let [id (:active-block-id @!state)]
+    (merge-with-previous! !state id)))
+
+(defn move-active-up! [!state]
+  (when-let [id (:active-block-id @!state)]
+    (move-block-up! !state id)))
+
+(defn move-active-down! [!state]
+  (when-let [id (:active-block-id @!state)]
+    (move-block-down! !state id)))

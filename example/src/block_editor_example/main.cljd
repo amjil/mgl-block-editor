@@ -1,0 +1,58 @@
+(ns block-editor-example.main
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:mgl_editor_core/post_frame_trigger.dart" :as pft]
+            [cljd.flutter :as f]
+            [block-editor.state :as be-state]
+            [block-editor.widgets.editor-container :as be-widget]
+            [rich-editor.services.history-service :as history]
+            [rich-editor.services.ime-service :as ime]
+            [shared-ime.fst-reader :as fst]
+            [shared-ime.next :as next]))
+
+(defonce !state (atom (be-state/initial-state)))
+(defonce !ime-attached (atom false))
+
+(defn main []
+  (m.WidgetsFlutterBinding/ensureInitialized)
+  ;; Load Mongolian IME data so candidate panel and conversion work (same as mgl-richtext-editor example).
+  (fst/ensure-loaded)
+  (next/ensure-loaded)
+  (f/run
+   (m/MaterialApp
+    .title "MGL Block Editor"
+    .debugShowCheckedModeBanner false
+    .theme (m/ThemeData
+            .primaryColor m.Colors/blue
+            .brightness m.Brightness/dark
+            .fontFamily "OyunQaganTig"
+            .visualDensity m.VisualDensity/adaptivePlatformDensity)
+    .home
+    (f/widget
+     :watch [state !state]
+     (m/Scaffold
+      .appBar
+      (m/AppBar
+       .title (m/Text "Block Editor Demo")
+       .actions
+       [(m/IconButton
+         .icon (m/Icon m.Icons/undo)
+         .tooltip "Undo"
+         .onPressed (when-not (empty? (get-in state [:history :undo-stack]))
+                      #(history/undo! !state)))
+        (m/IconButton
+         .icon (m/Icon m.Icons/redo)
+         .tooltip "Redo"
+         .onPressed (when-not (empty? (get-in state [:history :redo-stack]))
+                      #(history/redo! !state)))])
+      .body
+      (m/SafeArea
+       .child
+       (pft/PostFrameTrigger
+        .onLayout
+        (fn []
+          (when (compare-and-set! !ime-attached false true)
+            (when-let [active-id (:active-block-id @!state)]
+              (when (seq (:root @!state))
+                (ime/attach! !state active-id)))))
+        .child (be-widget/editor-container !state nil))))))))
+
