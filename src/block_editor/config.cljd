@@ -29,20 +29,50 @@
    :indent-selection! (fn [!state delta-val] (block-cmd/indent-selection! !state delta-val))
    :paste-when-no-focus! (fn [!state raw-text] (block-cmd/paste-when-no-focus! !state raw-text))})
 
+(defn- plugin->custom-renderers [plugins]
+  (into {} (map (fn [p] [(:type p) (:render p)]) (filter :render plugins))))
+
+(defn- plugin->block-style-fn [base plugins]
+  (let [plugin-style-map (into {} (keep (fn [p] (when (:block-style p) [(:type p) (:block-style p)])) plugins))
+        base-style-fn (:block-style base)]
+    (if (empty? plugin-style-map)
+      nil
+      (fn [block-type]
+        (if-let [s (get plugin-style-map block-type)]
+          (if (fn? s) (s block-type) s)
+          (base-style-fn block-type))))))
+
+(defn- plugin->text-block-types [base user-config plugins]
+  (into (or (:text-block-types user-config) (:text-block-types base))
+        (map :type (filter :text-block-type? plugins))))
+
 (defn merge-config
   "Merge user-config into base rich-editor config and register block-editor commands.
+  When user-config contains :block-plugins (vector of plugin maps), each plugin's :render
+  is merged into :custom-block-renderers, optional :block-style and :text-block-type? are applied.
   Returned config is compatible with rich-editor components."
   ([user-config]
    (merge-config rich-defaults/full-default-config user-config))
   ([base user-config]
    (let [base (or base rich-defaults/full-default-config)
-         cfg (rich-config/merge-config base (or user-config {}))
+         user-config (or user-config {})
+         plugins (get user-config :block-plugins [])
+         user-without-plugins (dissoc user-config :block-plugins)
+         plugin-renderers (plugin->custom-renderers plugins)
+         combined-style-fn (plugin->block-style-fn base plugins)
+         extended-text-types (plugin->text-block-types base user-without-plugins plugins)
+         effective-user (cond-> (assoc user-without-plugins
+                                      :custom-block-renderers
+                                      (merge plugin-renderers (get user-without-plugins :custom-block-renderers {})))
+                          combined-style-fn (assoc :block-style combined-style-fn)
+                          true (assoc :text-block-types extended-text-types))
+         cfg (rich-config/merge-config base effective-user)
          rich-cmds (:commands base)
          block-cmds (block-command-handlers)
-         user-cmds (get user-config :commands {})
+         user-cmds (get user-without-plugins :commands {})
          merged (merge rich-cmds block-cmds user-cmds)
          base-ops (get base :block-ops {})
-         user-ops (get user-config :block-ops {})
+         user-ops (get user-without-plugins :block-ops {})
          merged-ops (merge base-ops (block-ops) user-ops)]
      (assoc cfg :commands merged :block-ops merged-ops))))
 

@@ -32,19 +32,29 @@
                  spans))))))
 
 ;; =============================================================
-;; 2. HTML tag mapping
+;; 2. HTML tag mapping (built-in + extensible via :block-plugins)
 ;; =============================================================
 
-(defn- tag->block-type [tag default-type]
-  (case tag
-    "h1" :heading-1
-    "h2" :heading-2
-    "blockquote" :blockquote
-    "pre" :code-block
-    "li" :list-item
-    "p"  :paragraph
-    "img" :image
-    default-type))
+(def ^:private built-in-tag->block-type
+  {"h1" :heading-1 "h2" :heading-2 "blockquote" :blockquote
+   "pre" :code-block "li" :list-item "p" :paragraph "img" :image})
+
+(defn tag->block-type-map
+  "Build tag (string) -> block-type (keyword) from built-in and optional block-plugins.
+  Each plugin may have :html-tags (vector of tag names) mapping to its :type."
+  [block-plugins]
+  (let [from-plugins (reduce (fn [acc p]
+                               (if-let [tags (:html-tags p)]
+                                 (reduce (fn [a tag] (assoc a (str tag) (:type p))) acc tags)
+                                 acc))
+                             {}
+                             (or block-plugins []))]
+    (merge built-in-tag->block-type from-plugins)))
+
+(defn- resolve-block-type [tag->type tag default-type]
+  (if (map? tag->type)
+    (get tag->type tag default-type)
+    (tag->type tag default-type)))
 
 (defn- tag->inline-style [tag current-styles]
   (case tag
@@ -77,9 +87,13 @@
 
     (reset! !current-block {:type :paragraph :deltas [] :indent 0})))
 
+(defn- block-level-tags [tag->type-map]
+  (into #{"p" "div" "h1" "h2" "h3" "blockquote" "pre" "li" "img"} (keys tag->type-map)))
+
 (defn- walk-node!
-  "Recursively walk DOM tree; increment current-indent on nested lists"
-  [^dom/Node node current-styles current-indent !current-block !blocks]
+  "Recursively walk DOM tree; increment current-indent on nested lists.
+  tag->type-map is a map from tag string to block-type keyword."
+  [^dom/Node node current-styles current-indent !current-block !blocks tag->type-map]
   (cond
     (= (.-nodeType node) dom/Node.TEXT_NODE)
     (let [text (.-text node)]
@@ -88,16 +102,17 @@
 
     (= (.-nodeType node) dom/Node.ELEMENT_NODE)
     (let [^dom/Element el node
-          tag-name (str/lower-case (.-localName el))]
+          tag-name (str/lower-case (.-localName el))
+          block-tags (block-level-tags tag->type-map)]
       (cond
         (#{"ul" "ol"} tag-name)
         (doseq [child (.-nodes el)]
-          (walk-node! child current-styles (inc current-indent) !current-block !blocks))
+          (walk-node! child current-styles (inc current-indent) !current-block !blocks tag->type-map))
 
-        (#{"p" "div" "h1" "h2" "h3" "blockquote" "pre" "li" "img"} tag-name)
+        (block-tags tag-name)
         (do
           (flush-block! !current-block !blocks)
-          (let [b-type (tag->block-type tag-name :paragraph)
+          (let [b-type (resolve-block-type tag->type-map tag-name :paragraph)
                 actual-indent (max 0 current-indent)]
             (if (= b-type :image)
               (let [src (if (.-attributes el) (get (.-attributes el) "src") "")]
@@ -106,32 +121,37 @@
               (do
                 (reset! !current-block {:type b-type :deltas [] :indent actual-indent})
                 (doseq [child (.-nodes el)]
-                  (walk-node! child current-styles current-indent !current-block !blocks))
+                  (walk-node! child current-styles current-indent !current-block !blocks tag->type-map))
                 (flush-block! !current-block !blocks)))))
 
         :else
         (let [new-styles (tag->inline-style tag-name current-styles)]
           (doseq [child (.-nodes el)]
-            (walk-node! child new-styles current-indent !current-block !blocks)))))))
+            (walk-node! child new-styles current-indent !current-block !blocks tag->type-map)))))))
 
 ;; =============================================================
 ;; Public API
 ;; =============================================================
 
 (defn html->blocks
-  "Parse external HTML string into editor Block array"
-  [html-str]
-  (let [document (html-parser/parse html-str)
-        body (.-body document)
-        !blocks (atom [])
-        !current-block (atom {:type :paragraph :deltas [] :indent 0})]
+  "Parse external HTML string into editor Block array.
+  opts may contain :block-plugins (vector of plugin maps with :html-tags) or
+  :tag->block-type (map of tag string -> block-type keyword) to extend tag mapping."
+  ([html-str] (html->blocks html-str nil))
+  ([html-str opts]
+   (let [tag->type-map (or (get opts :tag->block-type)
+                           (tag->block-type-map (get opts :block-plugins)))
+         document (html-parser/parse html-str)
+         body (.-body document)
+         !blocks (atom [])
+         !current-block (atom {:type :paragraph :deltas [] :indent 0})]
 
-    (when body
-      (doseq [child (.-nodes body)]
-        (walk-node! child {} -1 !current-block !blocks)))
+     (when body
+       (doseq [child (.-nodes body)]
+         (walk-node! child {} -1 !current-block !blocks tag->type-map)))
 
-    (flush-block! !current-block !blocks)
-    @!blocks))
+     (flush-block! !current-block !blocks)
+     @!blocks)))
 
 (defn md->blocks
   "Simple Markdown parsing (block markers and leading indent only)"

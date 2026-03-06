@@ -16,7 +16,13 @@
         t (if (:underline attrs) (str "<u>" t "</u>") t)]
     t))
 
-(defn- block->html [block]
+(defn- span->md [{:keys [text attrs]}]
+  (let [t text
+        t (if (:bold attrs) (str "**" t "**") t)
+        t (if (:italic attrs) (str "*" t "*") t)]
+    t))
+
+(defn- default-block->html [block]
   (let [b-type (:type block)
         content (:content block "")
         spans (:content-spans block [])
@@ -38,23 +44,7 @@
       :image      (str "<img" style-str " src=\"" (get-in block [:data :url] "") "\" />\n")
       (str "<p" style-str ">" inner-html "</p>\n"))))
 
-(defn state->html
-  "Export editor state to HTML string."
-  [state]
-  (let [root (:root state)]
-    (apply str (map #(block->html (get-in state [:blocks %])) root))))
-
-;; =============================================================
-;; Markdown export (with indent)
-;; =============================================================
-
-(defn- span->md [{:keys [text attrs]}]
-  (let [t text
-        t (if (:bold attrs) (str "**" t "**") t)
-        t (if (:italic attrs) (str "*" t "*") t)]
-    t))
-
-(defn- block->md [block]
+(defn- default-block->md [block]
   (let [b-type (:type block)
         content (:content block "")
         spans (:content-spans block [])
@@ -73,8 +63,52 @@
       :image      (str indent-str "![image](" (get-in block [:data :url] "") ")\n\n")
       (str indent-str inner-md "\n\n"))))
 
+(defn- build-export-registry [block-plugins]
+  (let [built-in {:heading-1  {:html default-block->html :md default-block->md}
+                  :heading-2  {:html default-block->html :md default-block->md}
+                  :blockquote {:html default-block->html :md default-block->md}
+                  :code-block {:html default-block->html :md default-block->md}
+                  :list-item  {:html default-block->html :md default-block->md}
+                  :image      {:html default-block->html :md default-block->md}
+                  :paragraph  {:html default-block->html :md default-block->md}}
+        plugin-entries (reduce (fn [acc p]
+                                 (if (or (:block->html p) (:block->md p))
+                                   (assoc acc (:type p) {:html (:block->html p) :md (:block->md p)})
+                                   acc))
+                               {}
+                               (or block-plugins []))]
+    (merge built-in plugin-entries)))
+
+(defn- block->html-with-registry [block registry]
+  (if-let [handler (get registry (:type block))]
+    (if (:html handler)
+      ((:html handler) block)
+      (default-block->html block))
+    (default-block->html block)))
+
+(defn- block->md-with-registry [block registry]
+  (if-let [handler (get registry (:type block))]
+    (if (:md handler)
+      ((:md handler) block)
+      (default-block->md block))
+    (default-block->md block)))
+
+(defn state->html
+  "Export editor state to HTML string.
+  opts may contain :block-plugins (vector of plugin maps with :block->html) for custom block export."
+  ([state] (state->html state nil))
+  ([state opts]
+   (let [plugins (get opts :block-plugins [])
+         registry (build-export-registry plugins)
+         root (:root state)]
+     (apply str (map #(block->html-with-registry (get-in state [:blocks %]) registry) root)))))
+
 (defn state->md
-  "Export editor state to Markdown string."
-  [state]
-  (let [root (:root state)]
-    (apply str (map #(block->md (get-in state [:blocks %])) root))))
+  "Export editor state to Markdown string.
+  opts may contain :block-plugins (vector of plugin maps with :block->md) for custom block export."
+  ([state] (state->md state nil))
+  ([state opts]
+   (let [plugins (get opts :block-plugins [])
+         registry (build-export-registry plugins)
+         root (:root state)]
+     (apply str (map #(block->md-with-registry (get-in state [:blocks %]) registry) root)))))

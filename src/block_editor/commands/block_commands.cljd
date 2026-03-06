@@ -20,6 +20,10 @@
 ;; Insert / delete block
 ;; =============================================================
 
+(defn- plugin-for-type [state block-type]
+  (when-let [plugins (get-in state [:editor-config :block-plugins])]
+    (first (filter #(= (:type %) block-type) plugins))))
+
 (defn insert-block-after!
   "Insert a new empty text block after `after-id` (or append if nil).
   Returns the new block id."
@@ -36,6 +40,38 @@
         :after-selection nil)
       :merge? false)
     new-id))
+
+(defn insert-block-after-with-type!
+  "Insert a new block of type block-type after after-id (or append if nil).
+  optional-data is merged into the block's :data (e.g. {:url \"...\"} for image).
+  When a block plugin with :make-node is registered for block-type, it is used to create the node; otherwise (node/make-node id type \"\").
+  Returns the new block id."
+  ([!state after-id block-type] (insert-block-after-with-type! !state after-id block-type nil))
+  ([!state after-id block-type optional-data]
+   (let [state @!state
+         root (:root state)
+         idx (if after-id (inc (.indexOf root after-id)) (count root))
+         idx (max 0 (min idx (count root)))
+         new-id (now-id)
+         plugin (plugin-for-type state block-type)
+         new-block (cond
+                     (and plugin (:make-node plugin))
+                     (let [node ((:make-node plugin) new-id)]
+                       (if (and (map? optional-data) (seq optional-data))
+                         (assoc node :data (merge (:data node {}) optional-data))
+                         node))
+
+                     :else
+                     (let [node (node/make-node new-id block-type "")]
+                       (if (and (map? optional-data) (seq optional-data))
+                         (assoc node :data optional-data)
+                         node)))]
+     (tx/commit-transaction! !state
+       (tx/make-transaction
+         :ops [(tx/insert-op :root idx [new-block])]
+         :after-selection nil)
+       :merge? false)
+     new-id)))
 
 (defn delete-block!
   "Delete a block from :root. If it is the active block, focus moves to the nearest neighbor.
