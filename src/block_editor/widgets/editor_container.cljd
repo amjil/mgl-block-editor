@@ -57,12 +57,22 @@
                  ime-res
                  (let [logical-key (.-logicalKey event)
                        is-down? (dart/is? event s/KeyDownEvent)
+                       is-enter? (or (= logical-key s.LogicalKeyboardKey/enter)
+                                     (= logical-key s.LogicalKeyboardKey/numpadEnter))
+                       shift? (.-isShiftPressed (.-instance s/HardwareKeyboard))
                        is-up? (= logical-key s.LogicalKeyboardKey/arrowUp)
                        is-down-arrow? (= logical-key s.LogicalKeyboardKey/arrowDown)
                        is-left? (= logical-key s.LogicalKeyboardKey/arrowLeft)
                        is-right? (= logical-key s.LogicalKeyboardKey/arrowRight)
                        is-arrow? (or is-up? is-down-arrow? is-left? is-right?)]
                    (cond
+                     ;; Enter: split current block into a new block (Shift+Enter keeps block-internal newline).
+                     (and is-enter? is-down? (not shift?))
+                     (do
+                       (when-let [new-id (block-cmd/split-active-block! !state)]
+                         (editor-cmd/focus-block !state new-id 0))
+                       m.KeyEventResult/handled)
+
                      (= logical-key s.LogicalKeyboardKey/tab)
                      (if is-down?
                        (do
@@ -71,6 +81,22 @@
                            (rich-config/run-command cfg* !state :indent))
                          m.KeyEventResult/handled)
                        m.KeyEventResult/handled)
+
+                     ;; Backspace on empty block: delete current block and focus previous (when not first).
+                     (and is-down? (= logical-key s.LogicalKeyboardKey/backspace))
+                     (let [active-id (:active-block-id @!state)
+                           root (:root @!state)
+                           idx (when active-id (.indexOf root active-id))
+                           content (when active-id (or (get-in @!state [:blocks active-id :content]) ""))
+                           empty-block? (and active-id (zero? (count content)) (>= idx 0))
+                           not-first? (> idx 0)]
+                       (if (and empty-block? not-first?)
+                         (do
+                           (when-let [{:keys [prev-id new-offset]}
+                                      (block-cmd/merge-with-previous! !state active-id)]
+                             (editor-cmd/focus-block !state prev-id new-offset))
+                           m.KeyEventResult/handled)
+                         m.KeyEventResult/ignored))
 
                      is-arrow?
                      (if is-down?
@@ -148,19 +174,33 @@
                  (m/Padding
                   .padding (m.EdgeInsets/only .bottom 12.0)
                   .child
-                  (m/Column
-                   .mainAxisSize m/MainAxisSize.min
-                   .crossAxisAlignment m/CrossAxisAlignment.start
-                   .children
-                   [(m/ReorderableDragStartListener
-                     .index i
-                     .child
-                     (m/Padding
-                      .padding (m.EdgeInsets/only .top 6.0 .right 10.0)
-                      .child
-                      (m/SizedBox
-                       .width 18.0
-                       .height 18.0
-                       .child (m/Icon. m/Icons.drag_indicator))))
-                    (node-view/block-node id !state i cfg*)]))))))))))))))
-
+                  (let [block (get-in state [:blocks id])
+                        block-type (:type block)
+                        indent-level (get-in block [:attributes :indent] 0)
+                        style (rich-config/get-block-style cfg* block-type)
+                        tp (m/TextPainter.
+                            .text (m/TextSpan. .text "A" .style style)
+                            .textDirection m.TextDirection/ltr
+                            .maxLines 1)
+                        _ (.layout tp)
+                        first-line-h (.-preferredLineHeight tp)
+                        block-padding-left (+ 4.0 (* 32.0 indent-level))
+                        handle-size 18.0
+                        handle-left (max 0.0 (+ block-padding-left (/ (- first-line-h handle-size) 2.0)))]
+                    (m/Column
+                     .mainAxisSize m/MainAxisSize.min
+                     .crossAxisAlignment m/CrossAxisAlignment.start
+                     .children
+                     [(m/ReorderableDragStartListener
+                       .index i
+                       .child
+                       (m/Padding
+                        .padding (m.EdgeInsets/only .left handle-left .bottom 10.0)
+                        .child
+                        (m/SizedBox
+                         .width handle-size
+                         .height handle-size
+                         .child (m/Icon. m/Icons.drag_indicator))))
+                      (m/Expanded
+                       .child
+                       (node-view/block-node id !state i cfg*))])))))))))))))))
