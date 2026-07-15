@@ -1,0 +1,27 @@
+(ns block-editor.plugins.core
+  "Built-in block plugins registry.
+
+   Plugin map keys:
+   - `:type`               block type keyword
+   - `:text-block-type?`   treat as editable text (Enter splits, etc.)
+   - `:text-block-wrapper` `(fn [text-widget id !state idx block style cfg] -> Widget)`
+   - `:render`             `(fn [block-id !state index cfg] -> Widget)` active/edit
+   - `:render-edit`        alias for `:render`
+   - `:render-read`        `(fn [block base-style on-link-tap !state] -> Widget)` inactive"
+  (:require [block-editor.plugins.task :as task]
+            [block-editor.plugins.blockquote :as blockquote]
+            [block-editor.plugins.image :as image]
+            [block-editor.plugins.divider :as divider]))
+
+(def task-plugin task/task-plugin)
+(def blockquote-plugin blockquote/blockquote-plugin)
+(def image-plugin image/image-plugin)
+(def divider-plugin divider/divider-plugin)
+
+(defn default-plugins
+  "Built-in plugins merged by `build-config` (user plugins override by :type)."
+  []
+  [(task/task-plugin)
+   (blockquote/blockquote-plugin)
+   (image/image-plugin)
+   (divider/divider-plugin)])

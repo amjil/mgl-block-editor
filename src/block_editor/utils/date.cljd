@@ -1,0 +1,25 @@
+(ns block-editor.utils.date
+  "Date helpers for slash insert commands (/today, /tomorrow, /now).")
+
+(defn format-date
+  "Format DateTime as YYYY-MM-DD for wikilinks."
+  [datetime]
+  (let [y (.-year datetime)
+        m (-> (.-month datetime) str (.padLeft 2 "0"))
+        d (-> (.-day datetime) str (.padLeft 2 "0"))]
+    (str y "-" m "-" d)))
+
+(defn get-relative-date
+  "Return YYYY-MM-DD for offset-days (0=today, 1=tomorrow, -1=yesterday)."
+  [offset-days]
+  (let [now (dart:core/DateTime.now)
+        target (.add now (dart:core/Duration. .days offset-days))]
+    (format-date target)))
+
+(defn get-now-time
+  "Return current time as HH:mm."
+  []
+  (let [now (dart:core/DateTime.now)
+        h (-> (.-hour now) str (.padLeft 2 "0"))
+        m (-> (.-minute now) str (.padLeft 2 "0"))]
+    (str h ":" m)))

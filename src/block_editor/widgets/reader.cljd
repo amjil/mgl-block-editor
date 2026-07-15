@@ -1,0 +1,44 @@
+(ns block-editor.widgets.reader
+  "Inactive (read-mode) block rendering — static Mongol text, no IME/selectable mount."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:mongol/mongol.dart" :as mongol]
+            [rich-editor.config :as rich-config]
+            [rich-editor.rendering.text-renderer :as text-renderer]))
+
+(defn find-plugin
+  "Return the first plugin whose :type matches block-type, or nil."
+  [plugins block-type]
+  (first (filter #(= (:type %) block-type) plugins)))
+
+(defn- default-read-text
+  "Rich-text read view from :content / :content-spans."
+  [block base-style cfg on-link-tap]
+  (let [content (or (:content block) "")
+        spans (:content-spans block [])
+        cfg* (if on-link-tap (assoc cfg :on-tag-tap on-link-tap) cfg)]
+    (m/Flexible
+     .fit m.FlexFit/loose
+     .child
+     (mongol/MongolText.rich
+      (text-renderer/build-rich-text-span content spans base-style cfg*)))))
+
+(defn block-reader-view
+  "Static block view for inactive (unfocused) blocks.
+
+   Prefers plugin `:render-read`; otherwise default rich text from content-spans.
+   `!state` is passed as the 4th arg to `:render-read` (e.g. image width-ratio)."
+  ([block plugins cfg]
+   (block-reader-view block plugins cfg nil nil))
+  ([block plugins cfg on-link-tap]
+   (block-reader-view block plugins cfg on-link-tap nil))
+  ([block plugins cfg on-link-tap !state]
+   (let [b-type (or (:type block) :paragraph)
+         base-style (rich-config/get-block-style cfg b-type)
+         plugin (find-plugin plugins b-type)]
+     (m/Column
+      .mainAxisSize m.MainAxisSize/min
+      .crossAxisAlignment m.CrossAxisAlignment/start
+      .children
+      [(if (and plugin (:render-read plugin))
+         ((:render-read plugin) block base-style on-link-tap !state)
+         (default-read-text block base-style cfg on-link-tap))]))))

@@ -1,0 +1,35 @@
+(ns block-editor.utils.collapse
+  "Tree-aware outline collapse: :collapsed? hides :children subtrees.
+   Counterpart to notes-app's indent-based get-visible-root.")
+
+(defn has-children?
+  "Whether the block has nested children in the tree model."
+  [blocks-map block-id]
+  (boolean (seq (get-in blocks-map [block-id :children]))))
+
+(defn get-visible-root
+  "DFS over :root / :children. When a block is :collapsed?, its descendants
+   are omitted. Returns a flat vector of visible block IDs (in document order)."
+  [root-ids blocks-map]
+  (letfn [(walk [ids]
+            (mapcat
+             (fn [id]
+               (let [block (get blocks-map id)
+                     kids (:children block [])
+                     collapsed? (:collapsed? block false)]
+                 (cons id
+                       (when (and (seq kids) (not collapsed?))
+                         (walk kids)))))
+             ids))]
+    (vec (walk root-ids))))
+
+(defn any-collapsed?
+  "True if any block in blocks-map has :collapsed? set."
+  [blocks-map]
+  (boolean (some #(:collapsed? % false) (vals blocks-map))))
+
+(defn toggle-collapse!
+  "Toggle block collapse state (in-memory UI state)."
+  [!state block-id]
+  (when (has-children? (:blocks @!state) block-id)
+    (swap! !state update-in [:blocks block-id :collapsed?] #(if % false true))))

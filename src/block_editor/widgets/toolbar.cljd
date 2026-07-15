@@ -1,0 +1,90 @@
+(ns block-editor.widgets.toolbar
+  "A horizontal toolbar for block formatting and insertion.
+   Designed to sit at the bottom of the screen or above the virtual keyboard."
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]
+            [block-editor.commands.ops :as ops])) ;; 🌟 Directly import ops
+
+(defn- toolbar-button 
+  "Helper to create a consistent icon button for the toolbar."
+  [icon tooltip is-active? on-tap]
+  (m/IconButton
+   .icon (m/Icon icon)
+   .tooltip tooltip
+   ;; Blue when the current block matches this type; otherwise dark gray
+   .color (if is-active? m.Colors/blue m.Colors/black54)
+   .onPressed on-tap))
+
+(defn editor-toolbar
+  "The main toolbar widget."
+  [!state cfg]
+  (f/widget
+   :context ctx
+   :watch [state-val !state]
+   (let [active-id (:active-block-id state-val)
+         block (get-in state-val [:blocks active-id])
+         block-type (:type block :paragraph)]
+
+     (m/Container
+      .height 50.0
+      .width double/infinity
+      .decoration (m/BoxDecoration
+                   .color (if (= (.-brightness (m/Theme.of ctx)) m/Brightness.dark)
+                            m/Colors.grey.shade900
+                            m/Colors.white)
+                   ;; Subtle top shadow so the bar floats above the keyboard
+                   .boxShadow [(m/BoxShadow
+                                .color (-> m.Colors/black (.withOpacity 0.05))
+                                .blurRadius 4.0
+                                .offset (m/Offset 0.0 -2.0))])
+      .child
+      (if active-id
+        ;; Active block: show formatting tools
+        (m/SingleChildScrollView
+         .scrollDirection m.Axis/horizontal
+         .child
+         (m/Row
+          .children
+          [(m/SizedBox .width 8.0)
+
+           ;; 1. Basic text
+           (toolbar-button m.Icons/notes "Text" (= block-type :paragraph)
+                           #(ops/convert-block! !state active-id :paragraph))
+
+           (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
+
+           ;; 2. Headings (includes Heading 3)
+           (toolbar-button m.Icons/title "Heading 1" (= block-type :heading-1)
+                           #(ops/convert-block! !state active-id :heading-1))
+           (toolbar-button m.Icons/format_size "Heading 2" (= block-type :heading-2)
+                           #(ops/convert-block! !state active-id :heading-2))
+           (toolbar-button m.Icons/text_fields "Heading 3" (= block-type :heading-3)
+                           #(ops/convert-block! !state active-id :heading-3))
+
+           (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
+
+           ;; 3. Lists, tasks, and quotes (includes Task)
+           (toolbar-button m.Icons/format_list_bulleted "List" (= block-type :list-item)
+                           #(ops/convert-block! !state active-id :list-item))
+           (toolbar-button m.Icons/check_box "Task" (= block-type :task)
+                           #(ops/convert-block! !state active-id :task))
+           (toolbar-button m.Icons/format_quote "Quote" (= block-type :blockquote)
+                           #(ops/convert-block! !state active-id :blockquote))
+
+           (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
+
+           ;; 4. Media, dividers, and tables (includes Table)
+           (toolbar-button m.Icons/image "Image" (= block-type :image)
+                           #(ops/convert-block! !state active-id :image))
+           (toolbar-button m.Icons/horizontal_rule "Divider" (= block-type :divider)
+                           #(ops/convert-block! !state active-id :divider))
+           (toolbar-button m.Icons/table_chart "Table" (= block-type :table)
+                           #(ops/convert-block! !state active-id :table))
+
+           (m/SizedBox .width 16.0)]))
+
+        ;; No block selected (e.g. editor just opened): show placeholder
+        (m/Center
+         .child
+         (m/Text "Select a block to edit"
+                 .style (m/TextStyle .color m.Colors/grey))))))))

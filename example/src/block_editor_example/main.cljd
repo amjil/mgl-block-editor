@@ -1,58 +1,129 @@
 (ns block-editor-example.main
+  "Example app demonstrating the usage of the Block Editor with interactive images."
   (:require ["package:flutter/material.dart" :as m]
-            ["package:mgl_editor_core/post_frame_trigger.dart" :as pft]
+            ["package:flutter/foundation.dart" :as foundation :refer [kIsWeb]]
             [cljd.flutter :as f]
-            [block-editor.state :as be-state]
-            [block-editor.widgets.editor-container :as be-widget]
-            [rich-editor.services.history-service :as history]
-            [rich-editor.services.ime-service :as ime]
-            [shared-ime.fst-reader :as fst]
-            [shared-ime.next :as next]))
+            [block-editor.widgets.toolbar :as toolbar]
+            [block-editor.widgets.editor :as editor]
 
-(defonce !state (atom (be-state/initial-state)))
-(defonce !ime-attached (atom false))
+            ;; Cross-platform Mongolian IME engine libraries
+            [virtual-keyboard.input-control :as input-control]
+            [ime-core.remote-api :as remote]
+            [ime-core.fst-engine :as fst]
+            [ime-core.next-word :as next-word]))
+
+(defn is-mobile? []
+  (let [platform foundation/defaultTargetPlatform]
+    (or (= platform foundation.TargetPlatform/android)
+        (= platform foundation.TargetPlatform/iOS))))
+
+;; =============================================================================
+;; 1. State Initialization
+;; =============================================================================
+
+(defonce !doc-state
+  (atom {:root ["b-1" "b-2" "b-2b" "b-3"]
+         :active-block-id nil
+         :cursor-visible false
+         :external-keyboard-delegate nil
+         :blocks {"b-1" {:id "b-1"
+                         :type :heading-1
+                         :content "Block Editor Test"
+                         :content-spans []
+                         :children ["b-1a" "b-1b"]}
+                  "b-1a" {:id "b-1a"
+                          :type :paragraph
+                          :content "Nested child A — click arrow or Cmd+. to collapse"
+                          :content-spans []
+                          :children ["b-1a1"]}
+                  "b-1a1" {:id "b-1a1"
+                           :type :paragraph
+                           :content "Nested grandchild"
+                           :content-spans []
+                           :children []}
+                  "b-1b" {:id "b-1b"
+                          :type :paragraph
+                          :content "Nested child B"
+                          :content-spans []
+                          :children []}
+                  "b-2" {:id "b-2"
+                         :type :paragraph
+                         :content "Hohhot Road Trip Itinerary"
+                         :content-spans []
+                         :children []}
+                  "b-2b" {:id "b-2b"
+                          :type :task
+                          :content "Pack camera"
+                          :content-spans []
+                          :data {:checked false}
+                          :children []}
+                  "b-3" {:id "b-3"
+                         :type :image
+                         :data {:url "https://picsum.photos/400/200"
+                                :width-ratio 0.5}
+                         :children []}}}))
+;; =============================================================================
+;; 2. Editor Configuration
+;; =============================================================================
+
+(def my-editor-config
+  {:text-block-types #{:paragraph :heading-1 :heading-2 :heading-3 :blockquote :list-item :task}
+   ;; Built-in plugins (task / blockquote / image / divider) are registered by build-config.
+   :on-link-tap (fn [target] (println "link tap:" target))
+
+   :block-style (fn [b-type]
+                  (case b-type
+                    :heading-1 (m/TextStyle .fontSize 32.0
+                                            .fontWeight m.FontWeight/bold
+                                            .color m.Colors/black87
+                                            .fontFamily "OyunQaganTig")
+                    :heading-2 (m/TextStyle .fontSize 24.0 .fontWeight m.FontWeight/bold .color m.Colors/black87 .fontFamily "OyunQaganTig")
+                    :heading-3 (m/TextStyle .fontSize 20.0 .fontWeight m.FontWeight/w600 .color m.Colors/black87 .fontFamily "OyunQaganTig")
+                    :task      (m/TextStyle .fontSize 18.0 .color m.Colors/black87 .fontFamily "OyunQaganTig")
+
+                    (m/TextStyle .fontSize 18.0
+                                 .color m.Colors/black54
+                                 .fontFamily "OyunQaganTig")))})
+
+;; =============================================================================
+;; 3. Main UI & App Entry
+;; =============================================================================
+
+(defn editor-screen []
+  (f/widget
+   (m/Scaffold
+    .backgroundColor (m/Color 0xFFF5F5F5)
+    .appBar (m/AppBar 
+             .title (m/Text "Block Editor Example")
+             .elevation 0.0
+             .backgroundColor m.Colors/white
+             .foregroundColor m.Colors/black87)
+    .body
+    (m/SafeArea
+     .child
+     (editor/mongol-block-editor 
+      !doc-state 
+      :editor-config my-editor-config
+      :toolbar (toolbar/editor-toolbar !doc-state my-editor-config)
+      :show-block-handles? true
+      :padding (m.EdgeInsets/all 32.0))))))
 
 (defn main []
   (m.WidgetsFlutterBinding/ensureInitialized)
-  ;; Load Mongolian IME data so candidate panel and conversion work (same as mgl-richtext-editor example).
-  (fst/ensure-loaded)
-  (next/ensure-loaded)
+
+  (remote/set-config! {:base-url "localhost:3003"
+                       :candidate-api-path "/api/next_word/candidates"
+                       :next-word-api-path "/api/next_word/list"})
+  
+  (when-not kIsWeb
+    (await (fst/ensure-loaded))
+    (await (next-word/ensure-loaded)))
+  
+  (when (is-mobile?)
+    (input-control/set-control))
+
   (f/run
    (m/MaterialApp
-    .title "MGL Block Editor"
+    .title "Block Editor Example"
     .debugShowCheckedModeBanner false
-    .theme (m/ThemeData
-            .primaryColor m.Colors/blue
-            .brightness m.Brightness/dark
-            .fontFamily "OyunQaganTig"
-            .visualDensity m.VisualDensity/adaptivePlatformDensity)
-    .home
-    (f/widget
-     :watch [state !state]
-     (m/Scaffold
-      .appBar
-      (m/AppBar
-       .title (m/Text "Block Editor Demo")
-       .actions
-       [(m/IconButton
-         .icon (m/Icon m.Icons/undo)
-         .tooltip "Undo"
-         .onPressed (when-not (empty? (get-in state [:history :undo-stack]))
-                      #(history/undo! !state)))
-        (m/IconButton
-         .icon (m/Icon m.Icons/redo)
-         .tooltip "Redo"
-         .onPressed (when-not (empty? (get-in state [:history :redo-stack]))
-                      #(history/redo! !state)))])
-      .body
-      (m/SafeArea
-       .child
-       (pft/PostFrameTrigger
-        .onLayout
-        (fn []
-          (when (compare-and-set! !ime-attached false true)
-            (when-let [active-id (:active-block-id @!state)]
-              (when (seq (:root @!state))
-                (ime/attach! !state active-id)))))
-        .child (be-widget/editor-container !state nil))))))))
-
+    .home (editor-screen))))

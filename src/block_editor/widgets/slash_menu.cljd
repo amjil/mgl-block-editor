@@ -1,0 +1,115 @@
+(ns block-editor.widgets.slash-menu
+  "A floating command palette triggered by typing '/'.
+   Customized for Traditional Mongolian: Horizontal scrolling with vertical text.
+   Supports type-change commands and :action :insert (date/time) commands."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:mongol/mongol.dart" :as mgl]
+            [cljd.flutter :as f]
+            [block-editor.utils.date :as date]))
+
+(def type-commands
+  [{:type :paragraph :title "ᠡᠬᠡ ᠪᠢᠴᠢᠭ" :icon m.Icons/notes :keywords ["text" "paragraph" "p"]}
+   {:type :heading-1 :title "ᠲᠡᠷᠢᠭᠦᠨ ᠭᠠᠷᠴᠠᠭ" :icon m.Icons/title :keywords ["h1" "heading"]}
+   {:type :heading-2 :title "ᠳᠡᠳ᠋ ᠭᠠᠷᠴᠠᠭ" :icon m.Icons/title :keywords ["h2" "heading"]}
+   {:type :heading-3 :title "ᠭᠤᠷᠪᠠᠳᠠᠭᠴᠢ ᠭᠠᠷᠴᠠᠭ" :icon m.Icons/text_fields :keywords ["h3" "heading"]}
+   {:type :blockquote :title "ᠢᠰᠢᠯᠡᠯ" :icon m.Icons/format_quote :keywords ["quote" "q"]}
+   {:type :list-item :title "ᠵᠢᠭᠰᠠᠭᠠᠯᠲᠠ" :icon m.Icons/format_list_bulleted :keywords ["list" "bullet"]}
+   {:type :task :title "ᠠᠵᠢᠯ" :icon m.Icons/check_box :keywords ["task" "todo" "[]" "check"]}
+   {:type :divider :title "ᠲᠤᠰᠠᠭᠠᠷᠯᠠᠭᠴᠢ" :icon m.Icons/horizontal_rule :keywords ["divider" "line"]}
+   {:type :image :title "ᠵᠢᠷᠤᠭ" :icon m.Icons/image :keywords ["image" "img" "pic"]}
+   {:type :table :title "ᠬᠦᠰᠦᠨᠦᠭ" :icon m.Icons/table_chart :keywords ["table" "grid"]}])
+
+(defn- insert-commands
+  "Dynamic insert commands — :value-fn evaluated on apply so date/time stays current."
+  []
+  [{:title "Today" :icon m.Icons/today :keywords ["today"]
+    :action :insert :value-fn #(str "[[" (date/get-relative-date 0) "]]")}
+   {:title "Tomorrow" :icon m.Icons/event :keywords ["tomorrow"]
+    :action :insert :value-fn #(str "[[" (date/get-relative-date 1) "]]")}
+   {:title "Now" :icon m.Icons/access_time :keywords ["now" "time"]
+    :action :insert :value-fn date/get-now-time}])
+
+(defn- all-commands []
+  (into type-commands (insert-commands)))
+
+;; Kept for callers that expect the static list name
+(def available-commands type-commands)
+
+(defn- filter-commands [query]
+  (let [q (.toLowerCase query)
+        cmds (all-commands)]
+    (if (empty? q)
+      cmds
+      (filter (fn [{:keys [title keywords]}]
+                (or (clojure.string/includes? (.toLowerCase title) q)
+                    (some #(clojure.string/includes? % q) keywords)))
+              cmds))))
+
+(defn slash-overlay 
+  "A floating widget that listens to text input and appears when '/' is typed."
+  [!state cfg]
+  (f/widget
+   :watch [state-val !state]
+   (let [active-id (:active-block-id state-val)
+         content (if active-id (get-in state-val [:blocks active-id :content] "") "")
+         
+         ;; Regex checks if the text ends with '/' followed by optional letters
+         match (re-find #"/([a-zA-Z0-9]*)$" content)
+         
+         is-active? (some? match)
+         query (if match (second match) "")
+         filtered-items (filter-commands query)
+         ops (:block-ops cfg)]
+     
+     (if (and is-active? (seq filtered-items))
+       (m/Center
+        .child
+        (m/Material
+         .elevation 24.0
+         .borderRadius (m/BorderRadius.circular 12.0)
+         .clipBehavior m.Clip/antiAlias
+         .color m.Colors/white
+         .child
+         (m/ConstrainedBox
+          .constraints (m/BoxConstraints .maxHeight 220.0 .minHeight 100.0)
+          .child
+          (m/SingleChildScrollView
+           .scrollDirection m.Axis/horizontal
+           .child
+           (m/Row
+            .mainAxisSize m.MainAxisSize/min
+            .crossAxisAlignment m.CrossAxisAlignment/start
+            .children
+            (mapv (fn [item]
+                    (let [{:keys [title icon]} item]
+                      (m/InkWell
+                       .onTap (fn []
+                                (when-let [execute-fn (:execute-slash-command! ops)]
+                                  (execute-fn !state active-id item)))
+                       .child
+                       (m/Padding
+                        .padding (m.EdgeInsets/symmetric .horizontal 16.0 .vertical 16.0)
+                        .child
+                        (m/Column
+                         .mainAxisAlignment m.MainAxisAlignment/start
+                         .mainAxisSize m.MainAxisSize/min
+                         .children
+                         [(m/Container
+                           .padding (m.EdgeInsets/all 8.0)
+                           .decoration (m/BoxDecoration
+                                        .color (-> m.Colors/grey (.withOpacity 0.1))
+                                        .shape m.BoxShape/circle)
+                           .child (m/Icon icon .color m.Colors/black87 .size 20.0))
+                          (m/SizedBox .height 12.0)
+
+                          (m/Flexible
+                           .child
+                           (mgl/MongolText
+                            title
+                            .style (m/TextStyle
+                                    .fontWeight m.FontWeight/w500
+                                    .fontSize 15.0
+                                    .color m.Colors/black87)))])))))
+                  filtered-items))))))
+       
+       (m/SizedBox.shrink)))))

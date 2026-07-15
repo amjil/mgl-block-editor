@@ -1,0 +1,74 @@
+(ns block-editor.widgets.selection-bar
+  "Floating bulk-action bar shown when multiple blocks are selected
+   (marquee / Cmd+A / Cmd+click). Mirrors notes-app selection-action-bar."
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]
+            [block-editor.commands.ops :as ops]))
+
+(defn- action-icon-button [icon tooltip on-press & {:keys [color] :or {color m.Colors/white}}]
+  (m/Tooltip
+   .message tooltip
+   .child
+   (m/IconButton
+    .icon (m/Icon icon .color color)
+    .onPressed on-press)))
+
+(defn- selection-action-bar [!state selected-ids]
+  (let [count-text (str (count selected-ids) " blocks selected")]
+    (m/Material
+     .elevation 12.0
+     .color (-> m.Colors/grey .-shade900 (.withOpacity 0.9))
+     .borderRadius (m.BorderRadius/circular 30.0)
+     .child
+     (m/Padding
+      .padding (m.EdgeInsets/symmetric .horizontal 24.0 .vertical 12.0)
+      .child
+      (m/Row
+       .mainAxisSize m.MainAxisSize/min
+       .children
+       [(m/Text count-text
+                .style (m/TextStyle .color m.Colors/white .fontWeight m.FontWeight/bold))
+        (m/VerticalDivider .width 32.0 .color m.Colors/white24)
+
+        (action-icon-button m.Icons/check_box "Convert to task"
+                            #(ops/convert-blocks! !state selected-ids :task))
+
+        (action-icon-button m.Icons/title "Convert to heading"
+                            #(ops/convert-blocks! !state selected-ids :heading-1))
+
+        (action-icon-button m.Icons/delete_outline "Bulk delete"
+                            #(ops/delete-blocks! !state selected-ids)
+                            :color m.Colors/redAccent)
+
+        (m/VerticalDivider .width 32.0 .color m.Colors/white24)
+
+        (m/IconButton
+         .icon (m/Icon m.Icons/close .color m.Colors/white)
+         .onPressed #(swap! !state assoc :selected-block-ids #{}))])))))
+
+(defn bulk-action-bar
+  "Bottom-center floating bar. Visible when more than one block is selected."
+  [!state]
+  (f/widget
+   :watch [state !state]
+   (let [selected-ids (:selected-block-ids state #{})
+         show? (> (count selected-ids) 1)]
+     (m/Positioned
+      .bottom 40.0
+      .left 0.0 .right 0.0
+      .child
+      (m/Center
+       .child
+       (m/AnimatedSlide
+        .duration (dart:core/Duration .milliseconds 180)
+        .curve m.Curves/easeOutCubic
+        .offset (if show? (m/Offset. 0.0 0.0) (m/Offset. 0.0 0.25))
+        .child
+        (m/AnimatedOpacity
+         .duration (dart:core/Duration .milliseconds 140)
+         .curve m.Curves/easeOut
+         .opacity (if show? 1.0 0.0)
+         .child
+         (m/IgnorePointer
+          .ignoring (not show?)
+          .child (selection-action-bar !state selected-ids)))))))))

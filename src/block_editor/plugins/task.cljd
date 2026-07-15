@@ -1,0 +1,92 @@
+(ns block-editor.plugins.task
+  "Task checkbox plugin — editable text + checkbox when active; static when inactive."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:mongol/mongol.dart" :as mongol]
+            [cljd.flutter :as f]
+            [rich-editor.components.node-view :as node-view]
+            [rich-editor.commands.transaction :as tx]
+            [rich-editor.rendering.text-renderer :as text-renderer]))
+
+(defn- block-checked?
+  [block]
+  (boolean (or (get-in block [:data :checked])
+               (get-in block [:attributes :checked?] false))))
+
+(defn- toggle-checked!
+  [!state block-id]
+  (let [checked? (block-checked? (get-in @!state [:blocks block-id]))]
+    (tx/commit-transaction!
+     !state
+     (tx/make-transaction :ops [(tx/update-data-op block-id {:checked (not checked?)})]
+                          :after-selection nil))))
+
+(defn- task-style-cfg
+  [cfg checked?]
+  (if-not checked?
+    cfg
+    (let [style-fn (:block-style cfg)]
+      (assoc cfg :block-style
+             (fn [t]
+               (let [^m/TextStyle s (style-fn t)]
+                 (if (= t :task)
+                   (.copyWith s
+                              .decoration m.TextDecoration/lineThrough
+                              .color m.Colors/grey)
+                   s)))))))
+
+(defn task-plugin
+  "Task checkbox block."
+  []
+  {:type :task
+   :text-block-type? true
+
+   :render
+   (fn [block-id !state index cfg]
+     (f/widget
+      :watch [state !state]
+      :let [block (get-in state [:blocks block-id])
+            checked? (block-checked? block)
+            cfg* (task-style-cfg cfg checked?)]
+      (m/Column
+       .mainAxisSize m.MainAxisSize/min
+       .crossAxisAlignment m.CrossAxisAlignment/center
+       .children
+       [(m/GestureDetector
+         .behavior m.HitTestBehavior/opaque
+         .onTap #(toggle-checked! !state block-id)
+         .child
+         (m/Padding
+          .padding (m.EdgeInsets/only .bottom 8.0)
+          .child
+          (m/Icon (if checked? m.Icons/check_box m.Icons/check_box_outline_blank)
+                  .size 20.0
+                  .color (if checked? m.Colors/blue m.Colors/grey))))
+        (node-view/block-node block-id !state index cfg*)])))
+
+   :render-read
+   (fn [block base-style on-link-tap _!state]
+     (let [checked? (block-checked? block)
+           content (or (:content block) "")
+           spans (:content-spans block [])
+           ^m/TextStyle style (if checked?
+                                (.copyWith ^m/TextStyle base-style
+                                           .decoration m.TextDecoration/lineThrough
+                                           .color m.Colors/grey)
+                                base-style)
+           cfg (cond-> {}
+                 on-link-tap (assoc :on-tag-tap on-link-tap))]
+       (m/Column
+        .mainAxisSize m.MainAxisSize/min
+        .crossAxisAlignment m.CrossAxisAlignment/center
+        .children
+        [(m/Padding
+          .padding (m.EdgeInsets/only .bottom 8.0)
+          .child
+          (m/Icon (if checked? m.Icons/check_box m.Icons/check_box_outline_blank)
+                  .color (if checked? m.Colors/blue m.Colors/grey)
+                  .size 20.0))
+         (m/Flexible
+          .fit m.FlexFit/loose
+          .child
+          (mongol/MongolText.rich
+           (text-renderer/build-rich-text-span content spans style cfg)))])))})

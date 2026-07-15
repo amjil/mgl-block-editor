@@ -1,0 +1,261 @@
+(ns block-editor.widgets.editor
+  "The standalone, high-level Block Editor orchestrator."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:flutter/foundation.dart" :as foundation]
+            ["package:flutter/services.dart" :as s]
+            [cljd.flutter :as f]
+            
+            [block-editor.config :as be-config]
+            [block-editor.commands.ops :as be-ops]
+            [block-editor.handlers.keyboard :as kb-handlers]
+            [block-editor.widgets.block-tree :as block-tree]
+            [block-editor.widgets.slash-menu :as slash-menu]
+            [block-editor.widgets.selection-bar :as selection-bar]
+            
+            [rich-editor.config :as rich-config]
+            [rich-editor.commands.editor-commands :as editor-cmd]
+            [rich-editor.components.node-view :as node-view]
+            [rich-editor.services.ime-service :as ime]
+            
+            [virtual-keyboard.keyboard :as keyboard]
+            [virtual-keyboard.keyboard-state :as vk-state]
+            [virtual-keyboard.keyboard-action :as vk-action]
+            [virtual-keyboard.options :as options]
+            [shared-ime.overlay-view :as overlay]))
+
+(defn is-mobile? []
+  (let [platform foundation/defaultTargetPlatform]
+    (or (= platform foundation.TargetPlatform/android)
+        (= platform foundation.TargetPlatform/iOS))))
+
+;; -----------------------------------------------------------------------------
+;; Marquee selection (Shift+drag) — mirrors notes-app / prior editor-container
+;; -----------------------------------------------------------------------------
+
+(defonce !marquee-last-intersect-ms (atom 0))
+(def ^:private intersect-throttle-ms 50)
+
+(defn- handle-selection-intersection!
+  "Update :selected-block-ids from selection rect vs block text-key bounds."
+  [!state selection-rect ^m/GlobalKey container-key]
+  (when-let [^m/RenderBox container-box (when-let [ctx (.-currentContext container-key)]
+                                          (.findRenderObject ctx))]
+    (let [keys-map @node-view/!block-text-keys
+          selected (atom #{})]
+      (doseq [[block-id g-key] keys-map]
+        (when-let [ctx (and g-key (.-currentContext g-key))]
+          (try
+            (let [^m/RenderBox render-box (.findRenderObject ctx)]
+              (when render-box
+                (let [global-pos (.localToGlobal render-box m.Offset/zero)
+                      local-pos (.globalToLocal container-box global-pos)
+                      size (.-size render-box)
+                      block-rect (m.Rect/fromLTWH (.-dx local-pos) (.-dy local-pos)
+                                                  (.-width size) (.-height size))]
+                  (when (.overlaps selection-rect block-rect)
+                    (swap! selected conj block-id)))))
+            (catch Exception _ nil))))
+      (be-ops/set-block-selection! !state @selected))))
+
+(defn- marquee-rect-overlay [selecting? select-rect]
+  (when (and selecting? select-rect)
+    (m/Positioned
+     .left (.-left select-rect)
+     .top (.-top select-rect)
+     .width (.-width select-rect)
+     .height (.-height select-rect)
+     .child
+     (m/IgnorePointer
+      .child
+      (m/Container
+       .decoration (m/BoxDecoration
+                    .color (-> m.Colors/blue (.withOpacity 0.12))
+                    .border (m/Border.all .color m.Colors/blue .width 1.0)
+                    .borderRadius (m.BorderRadius/circular 2.0)))))))
+
+(defn- editor-stack
+  "Shared Stack layers: editor, marquee, slash menu, optional extras, bulk bar."
+  [core-child !state cfg selecting? select-rect extras]
+  (m/Stack
+   .children
+   (vec (remove nil?
+                (concat
+                 [core-child
+                  (marquee-rect-overlay selecting? select-rect)
+                  (slash-menu/slash-overlay !state cfg)]
+                 extras
+                 [(selection-bar/bulk-action-bar !state)])))))
+
+(defn mongol-block-editor
+  "A highly customizable, horizontal-scrolling block editor for Traditional Mongolian."
+  [!state & {:keys [editor-config padding background-color show-block-handles? leading-widget toolbar]
+             :or {padding (m.EdgeInsets/all 24.0) background-color m.Colors/transparent show-block-handles? false}}]
+  
+  (let [cfg (be-config/build-config editor-config)
+        ops (:block-ops cfg)
+        ;; Ephemeral marquee UI state (not persisted in document atom)
+        !selecting? (atom false)
+        !select-start (atom nil)
+        !select-rect (atom nil)]
+    (swap! !state assoc :editor-config cfg)
+
+    (f/widget
+     :managed [editor-focus-node (m/FocusNode)
+               marquee-key (m/GlobalKey.)]
+     :watch [state !state
+             selecting? !selecting?
+             select-rect !select-rect]
+     
+     (let [root-ids (:root state)
+           
+           block-list
+           (m/ReorderableListView.builder
+            .scrollDirection m.Axis/horizontal
+            .padding padding
+            .buildDefaultDragHandles false 
+            .onReorder (fn [^int old-idx ^int new-idx]
+                         ;; :root indices stay stable under nested collapse.
+                         (when-let [reorder-fn (:reorder-block! ops)]
+                           (reorder-fn !state old-idx new-idx)))
+            .proxyDecorator (fn [^m/Widget child ^int index ^m/Animation animation]
+                              (m/AnimatedBuilder 
+                               .animation animation 
+                               .builder (fn [ctx _] 
+                                          (m/Material 
+                                           .elevation (* 6.0 (.-value animation)) 
+                                           .color m.Colors/transparent 
+                                           .shadowColor m.Colors/black26 
+                                           .child child))))
+            .itemCount (count root-ids)
+            .itemBuilder
+            (fn [^m/BuildContext ctx ^int idx]
+              (let [id (nth root-ids idx)]
+                (m/KeyedSubtree
+                 .key (m/ValueKey. id)
+                 .child (block-tree/block-subtree id !state idx cfg show-block-handles? 0)))))
+           
+           ;; Shift+drag marquee + focus handling on the editor content area
+           interactive-area
+           (m/Listener
+            .behavior m.HitTestBehavior/translucent
+            .onPointerDown
+            (fn [e]
+              (if (.-isShiftPressed (.-instance s/HardwareKeyboard))
+                (let [pos (.-localPosition e)]
+                  (reset! !selecting? true)
+                  (reset! !select-start pos)
+                  (reset! !select-rect (m.Rect/fromPoints pos pos))
+                  (swap! !state assoc :selected-block-ids #{}))
+                (.requestFocus editor-focus-node)))
+            .onPointerMove
+            (fn [e]
+              (when @!selecting?
+                (let [pos (.-localPosition e)
+                      start @!select-start
+                      rect (m.Rect/fromPoints start pos)]
+                  (reset! !select-rect rect)
+                  (let [now (dart:core/DateTime.now)
+                        ms (.-millisecondsSinceEpoch now)]
+                    (when (>= (- ms @!marquee-last-intersect-ms) intersect-throttle-ms)
+                      (reset! !marquee-last-intersect-ms ms)
+                      (handle-selection-intersection! !state rect marquee-key))))))
+            .onPointerUp
+            (fn [_]
+              (reset! !selecting? false)
+              (reset! !select-start nil)
+              (reset! !select-rect nil)
+              (m/WidgetsBinding.instance.addPostFrameCallback
+               (fn [_]
+                 (try
+                   (.requestFocus editor-focus-node)
+                   (catch Exception _)))))
+            .onPointerCancel
+            (fn [_]
+              (reset! !selecting? false)
+              (reset! !select-start nil)
+              (reset! !select-rect nil))
+            .child
+            (m/GestureDetector
+             .behavior m.HitTestBehavior/translucent
+             .onTap (fn []
+                      (when-not (:active-block-id @!state)
+                        (when-let [last-id (last (:root @!state))]
+                          (let [len (count (get-in @!state [:blocks last-id :content] ""))]
+                            (editor-cmd/focus-block !state last-id len)))))
+             .child
+             (m/KeyedSubtree
+              .key marquee-key
+              .child block-list)))
+           
+           core-input-area 
+           (m/Focus
+            .focusNode editor-focus-node
+            .onFocusChange 
+            (fn [has-focus?]
+              (if has-focus?
+                (do
+                  (swap! !state assoc :external-keyboard-delegate nil :cursor-visible true)
+                  (when-let [target-id (or (:active-block-id @!state) (last (:root @!state)))]
+                    (let [sel (get-in @!state [:blocks target-id :selection])
+                          offset (if sel (.-extentOffset sel) (count (get-in @!state [:blocks target-id :content] "")))]
+                      (editor-cmd/focus-block !state target-id offset))))
+                (do
+                  (ime/detach!)
+                  (swap! !state assoc :cursor-visible false))))
+            .onKeyEvent (fn [node event] (kb-handlers/handle-key-event cfg !state node event))
+            .child interactive-area)]
+
+       (m/Container
+        .color background-color
+        .child
+        (if (is-mobile?)
+          (f/widget
+           :let [info (merge options/keyboard-option 
+                             {:keyboard/mongol-font-family "OyunQaganTig"
+                              :keyboard/key-container-color m/Colors.grey.shade500
+                              :keyboard/font-size 16})]
+           :bind {:info info}
+           (m/Column
+            .children
+            [(m/Expanded
+              .child
+              (editor-stack
+               core-input-area !state cfg selecting? select-rect
+               [(if (or (:active-block-id state) (:external-keyboard-delegate state))
+                  (keyboard/candidates nil)
+                  (m/SizedBox.shrink))]))
+             
+             (if toolbar toolbar (m/SizedBox.shrink))
+             (if (or (:active-block-id state) (:external-keyboard-delegate state))
+               (keyboard/keyboard
+                {:custom-fns
+                 {:on-return
+                  (fn []
+                    (if (:external-keyboard-delegate @!state)
+                      (when-let [on-return-fn (:on-return (:external-keyboard-delegate @!state))] (on-return-fn))
+                      (kb-handlers/handle-enter-action !state cfg)))
+                  :on-backspace
+                  (fn []
+                    (let [candidates (:keyboard/candidates-list @vk-state/state)]
+                      (if (seq candidates)
+                        (vk-action/clear-candidates)
+                        (if (:external-keyboard-delegate @!state)
+                          (when-let [on-backspace-fn (:on-backspace (:external-keyboard-delegate @!state))] (on-backspace-fn))
+                          (kb-handlers/handle-backspace-action !state cfg)))))}})
+               (m/SizedBox.shrink))]))
+          
+          ;; Desktop layout
+          (overlay/ime-global-wrapper
+           (m/Column
+            .children
+            [(m/Expanded
+              .child
+              (editor-stack
+               (m/CallbackShortcuts
+                .bindings (rich-config/shortcut-bindings cfg !state)
+                .child core-input-area)
+               !state cfg selecting? select-rect
+               []))
+             
+             (if toolbar toolbar (m/SizedBox.shrink))])
+           "main-page-ime-wrapper")))))))

@@ -1,0 +1,65 @@
+(ns block-editor.plugins.divider
+  "Divider block plugin — vertical rule for Mongolian columns."
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]))
+
+(defn- render-divider-edit
+  [id !state _index cfg]
+  (f/widget
+   :watch [state-val !state]
+   (let [is-active? (= id (:active-block-id state-val))
+         selected-ids (:selected-block-ids state-val #{})
+         is-block-selected? (contains? selected-ids id)
+         ops (:block-ops cfg)]
+     (m/Builder
+      .builder
+      (fn [^m/BuildContext ctx]
+        (m/GestureDetector
+         .behavior m.HitTestBehavior/opaque
+         .onTapUp (fn [_]
+                    (when-let [toggle-fn (:toggle-block-selection! ops)]
+                      (toggle-fn !state id))
+                    nil)
+         .child
+         (m/Container
+          .width 32.0
+          .margin (m.EdgeInsets/only .bottom 16.0)
+          .padding (m.EdgeInsets/symmetric .horizontal 8.0)
+          .decoration (m/BoxDecoration
+                       .color m.Colors/transparent
+                       .border (if is-active?
+                                 (m/Border.all .color m.Colors/blue .width 1.5)
+                                 (m/Border.all .color m.Colors/transparent .width 1.5))
+                       .borderRadius (m.BorderRadius/circular 4.0))
+          .child
+          (m/Stack
+           .clipBehavior m.Clip/none
+           .children
+           [(m/Center
+             .child
+             (m/Container
+              .width 1.5
+              .color (if (= (.-brightness (m/Theme.of ctx)) m.Brightness/dark)
+                       m/Colors.grey.shade700
+                       m/Colors.grey.shade300)))
+            (if is-block-selected?
+              (m/Positioned.fill
+               .child (m/Container
+                       .decoration (m/BoxDecoration
+                                    .color (-> m.Colors/blue (.withOpacity 0.3))
+                                    .borderRadius (m.BorderRadius/circular 4.0))))
+              (m/SizedBox.shrink))]))))))))
+
+(defn- render-divider-read
+  [_block _base-style _on-link-tap _!state]
+  (m/Padding
+   .padding (m.EdgeInsets/symmetric .vertical 16.0 .horizontal 8.0)
+   .child (m/Container .width 2.0 .height 150.0 .color m.Colors/black12)))
+
+(defn divider-plugin
+  "Vertical divider (atomic)."
+  []
+  {:type :divider
+   :text-block-type? false
+   :render render-divider-edit
+   :render-read render-divider-read})

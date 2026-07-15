@@ -1,0 +1,227 @@
+(ns block-editor.widgets.block-tree
+  "Handles recursive rendering of block trees, selection overlays, and menus.
+   Active blocks mount the editable node-view; inactive blocks use read-mode."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:flutter/services.dart" :as s]
+            ["package:mongol/mongol.dart" :as mgl]
+            [cljd.flutter :as f]
+            [components.menu :as menu]
+            [block-editor.utils.text :as text]
+            [block-editor.utils.collapse :as collapse]
+            [block-editor.widgets.reader :as reader]
+            [rich-editor.config :as rich-config]
+            [rich-editor.commands.editor-commands :as editor-cmd]
+            [rich-editor.components.node-view :as node-view]))
+
+(defn- get-placeholder-text [block-type]
+  (case block-type
+    :paragraph "Type '/' for commands"
+    :heading-1 "Heading 1"
+    :heading-2 "Heading 2"
+    :heading-3 "Heading 3"
+    :blockquote "Empty quote"
+    :list-item "List item"
+    :task "Task"
+    :code-block "Code"
+    ""))
+
+(defn- ensure-block-key
+  "Reuse rich-editor text keys so marquee selection can measure inactive blocks."
+  [id]
+  (get (swap! node-view/!block-text-keys
+              (fn [m] (if (contains? m id) m (assoc m id (m/GlobalKey.)))))
+       id))
+
+(defn- plugin-edit-render
+  "Return plugin :render / :render-edit fn, or nil."
+  [plugin]
+  (when plugin
+    (or (:render plugin) (:render-edit plugin))))
+
+(defn- render-edit-content
+  "Active/edit-mode body: plugin :render, text block-node, or custom atomic renderer."
+  [id !state idx cfg block is-active? style]
+  (let [block-type (:type block)
+        is-text? (rich-config/text-block-type? cfg block-type)
+        is-empty? (empty? (:content block ""))
+        plugins (:block-plugins cfg [])
+        plugin (reader/find-plugin plugins block-type)
+        edit-render (plugin-edit-render plugin)
+        indent-level (get-in block [:attributes :indent] 0)
+        indent-padding (* indent-level 32.0)
+        placeholder (get-placeholder-text block-type)]
+    (cond
+      edit-render
+      (edit-render id !state idx cfg)
+
+      is-text?
+      (let [text-stack
+            (m/Stack
+             .alignment m.Alignment/topLeft
+             .clipBehavior m.Clip/none
+             .children
+             [(if (and is-empty? is-active? (not-empty placeholder))
+                (m/Padding
+                 .padding (m.EdgeInsets/only .top (+ 4.0 indent-padding) .left 4.0 .right 4.0 .bottom 4.0)
+                 .child (m/IgnorePointer
+                         .child (mgl/MongolText placeholder
+                                                .style (if style
+                                                         (.copyWith ^m/TextStyle style .color m.Colors/black26)
+                                                         (m/TextStyle .color m.Colors/black26)))))
+                (m/SizedBox.shrink))
+              (node-view/block-node id !state idx cfg)])]
+        text-stack)
+
+      :else
+      (if-let [custom-render (get-in cfg [:custom-block-renderers block-type])]
+        (custom-render id !state idx block style cfg)
+        (m/Text (str "Unsupported block type: " (name block-type)))))))
+
+(defn- render-read-content
+  "Inactive/read-mode body: static reader; tap focuses the block."
+  [id !state cfg block]
+  (let [plugins (:block-plugins cfg [])
+        on-link-tap (:on-link-tap cfg)]
+    (m/GestureDetector
+     .behavior m.HitTestBehavior/opaque
+     .onTap #(editor-cmd/focus-block !state id 0)
+     .child
+     (m/Container
+      .key (ensure-block-key id)
+      .child (reader/block-reader-view block plugins cfg on-link-tap !state)))))
+
+(defn- render-single-block
+  [id !state idx cfg show-handles? depth]
+  (f/widget
+   :watch [state-val !state]
+   (let [block (get-in state-val [:blocks id])
+         is-active? (= id (:active-block-id state-val))
+         block-type (:type block)
+         is-text? (rich-config/text-block-type? cfg block-type)
+         style (if is-text? (rich-config/get-block-style cfg block-type) nil)
+         exact-col-width (if style (text/get-exact-column-width style) 18.0)
+         handle-left-pad (max 0.0 (- (+ 4.0 (/ exact-col-width 2.0)) 8.0))
+         ops (:block-ops cfg)
+
+         selected-ids (:selected-block-ids state-val #{})
+         is-multi-select-mode? (seq selected-ids)
+         is-block-selected? (contains? selected-ids id)
+         show-arrow? (collapse/has-children? (:blocks state-val) id)
+         is-collapsed? (:collapsed? block false)
+         show-handle? (or show-arrow?
+                          is-block-selected?
+                          (and show-handles? is-active?))
+         drag-icon (m/Icon m.Icons/drag_indicator
+                           .size 16.0
+                           .color (if is-block-selected? m.Colors/blue m.Colors/grey))
+         collapse-icon (m/Icon (if is-collapsed? m.Icons/arrow_right m.Icons/arrow_drop_down)
+                               .size 16.0 .color m.Colors/blue)
+         handle-tap
+         (fn [show-menu]
+           (let [hw (.-instance s/HardwareKeyboard)
+                 meta? (or (.-isControlPressed hw) (.-isMetaPressed hw))]
+             (if meta?
+               (when-let [f (:toggle-block-selection! ops)] (f !state id))
+               (show-menu))))]
+
+     (m/Column
+      .crossAxisAlignment m.CrossAxisAlignment/start
+      .children
+      [(if show-handle?
+         (let [drag-btn
+               (menu/custom-popup-menu
+                {:target-anchor m.Alignment/centerRight
+                 :follower-anchor m.Alignment/centerLeft
+                 :offset-x 16.0
+                 :trigger-builder
+                 (fn [show-menu]
+                   (m/GestureDetector
+                    .behavior m.HitTestBehavior/opaque
+                    .onTap #(handle-tap show-menu)
+                    .onLongPress show-menu
+                    .child
+                    (m/Padding
+                     .padding (m.EdgeInsets/only .left handle-left-pad .bottom 8.0)
+                     .child (m/RotatedBox
+                             .quarterTurns 1
+                             .child drag-icon))))
+                 :items [{:type :item :title "Select" :leading m.Icons/check_box_outline_blank :on-tap #(when-let [f (:toggle-block-selection! ops)] (f !state id))}
+                         {:type :divider}
+                         {:type :item :title "Delete" :leading m.Icons/delete :leading-color m.Colors/red :on-tap #(if is-multi-select-mode? ((:delete-blocks! ops) !state selected-ids) ((:delete-block! ops) !state id))}
+                         {:type :divider}
+                         {:type :item :title "Turn to Text" :leading m.Icons/notes :on-tap #(when-let [f (:convert-block! ops)] (f !state id :paragraph))}
+                         {:type :item :title "Turn to Heading 1" :leading m.Icons/title :on-tap #(when-let [f (:convert-block! ops)] (f !state id :heading-1))}
+                         {:type :item :title "Turn to Heading 2" :leading m.Icons/format_size :on-tap #(when-let [f (:convert-block! ops)] (f !state id :heading-2))}
+                         {:type :item :title "Turn to Heading 3" :leading m.Icons/text_fields :on-tap #(when-let [f (:convert-block! ops)] (f !state id :heading-3))}
+                         {:type :item :title "Turn to Task" :leading m.Icons/check_box :on-tap #(when-let [f (:convert-block! ops)] (f !state id :task))}]})
+               handle-ui
+               (if show-arrow?
+                 (m/Column
+                  .mainAxisSize m.MainAxisSize/min
+                  .crossAxisAlignment m.CrossAxisAlignment/start
+                  .children
+                  [(m/GestureDetector
+                    .behavior m.HitTestBehavior/opaque
+                    .onTap #(collapse/toggle-collapse! !state id)
+                    .child
+                    (m/Padding
+                     .padding (m.EdgeInsets/only .left handle-left-pad .bottom 2.0)
+                     .child (m/RotatedBox .quarterTurns 1 .child collapse-icon)))
+                   (if (zero? depth)
+                     (m/ReorderableDragStartListener .index idx .child drag-btn)
+                     drag-btn)])
+                 (if (zero? depth)
+                   (m/ReorderableDragStartListener .index idx .child drag-btn)
+                   drag-btn))]
+           handle-ui)
+         (m/SizedBox .height (if show-handles? 24.0 0.0)))
+
+       (m/Expanded
+        .child
+        (m/Padding
+         .padding (m.EdgeInsets/only .right 24.0)
+         .child
+         (let [content-widget
+               (if is-active?
+                 (render-edit-content id !state idx cfg block is-active? style)
+                 (render-read-content id !state cfg block))]
+
+           (m/Stack
+            .clipBehavior m.Clip/none
+            .children
+            [(if is-block-selected?
+               (m/Positioned.fill
+                .child (m/Container
+                        .decoration (m/BoxDecoration
+                                     .color (-> m.Colors/blue (.withOpacity 0.15))
+                                     .borderRadius (m.BorderRadius/circular 4.0))))
+               (m/SizedBox.shrink))
+
+             (if is-multi-select-mode?
+               (m/GestureDetector
+                .behavior m.HitTestBehavior/opaque
+                .onTap #(when-let [f (:toggle-block-selection! ops)] (f !state id))
+                .child (m/IgnorePointer .child content-widget))
+               content-widget)]))))]))))
+
+(defn block-subtree
+  "Recursively renders a block and its nested children (unless :collapsed?)."
+  [id !state idx cfg show-handles? depth]
+  (f/widget
+   :watch [state-val !state]
+   (let [block (get-in state-val [:blocks id])
+         children (:children block [])
+         collapsed? (:collapsed? block false)
+         visible-children (if collapsed? [] children)]
+     (m/Row
+      .crossAxisAlignment m.CrossAxisAlignment/start
+      .mainAxisSize m.MainAxisSize/min
+      .children
+      (vec
+       (cons
+        (render-single-block id !state idx cfg show-handles? depth)
+        (map (fn [child-id]
+               (m/Padding
+                .padding (m.EdgeInsets/only .top 32.0)
+                .child (block-subtree child-id !state idx cfg show-handles? (inc depth))))
+             visible-children)))))))

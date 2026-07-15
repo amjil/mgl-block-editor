@@ -1,0 +1,20 @@
+(ns block-editor.utils.text
+  "Utility functions for the block editor, including text measurement and layout math."
+  (:require ["package:flutter/material.dart" :as m]))
+
+(defn get-exact-column-width 
+  "Uses TextPainter to calculate the exact pixel width of a single text column
+   based on the provided TextStyle. Essential for precise vertical alignments."
+  [^m/TextStyle style]
+  (let [;; We use a standard wide Mongolian character to measure the column bounds
+        test-char "ᠮ" 
+        painter (m/TextPainter
+                 .text (m/TextSpan .text test-char .style style)
+                 ;; TextDirection is required by TextPainter to perform layout
+                 .textDirection m.TextDirection/ltr)]
+    
+    ;; Trigger the synchronous off-screen layout calculation
+    (.layout painter)
+    
+    ;; Return the horizontal width of the bounding box
+    (.-width painter)))
