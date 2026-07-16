@@ -45,7 +45,8 @@
    - `:block-ops`
    - `:text-block-wrappers`
    - `:block-plugins`
-   - `:on-link-tap`"
+   - `:on-link-tap`
+   - `:link-suggestions`  — `(fn [query] -> seq of page-name strings)` for `[[` autocomplete"
   [user-config]
   (let [user-config (or user-config {})
         plugin-list (merge-plugins (plugins/default-plugins)
@@ -55,7 +56,8 @@
         text-types (into (or (:text-block-types user-config) default-text-types #{})
                          (:text-block-types expanded))
         rich-user (-> user-config
-                      (dissoc :block-plugins :on-link-tap :text-block-wrappers :block-ops)
+                      (dissoc :block-plugins :on-link-tap :link-suggestions
+                              :text-block-wrappers :block-ops)
                       (assoc :text-block-types text-types)
                       (update :custom-block-renderers
                               (fn [crs]
@@ -69,4 +71,5 @@
            :block-ops ops/standard-block-ops
            :text-block-wrappers wrappers
            :block-plugins plugin-list
-           :on-link-tap (:on-link-tap user-config))))
+           :on-link-tap (:on-link-tap user-config)
+           :link-suggestions (:link-suggestions user-config))))

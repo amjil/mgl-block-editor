@@ -1,0 +1,98 @@
+(ns block-editor.utils.inline
+  "Wiki-style inline markup and block properties.
+   Extracted from notes-app.utils.parser — no DB dependency."
+  (:require ["dart:core" :as dart]
+            [clojure.string :as str]))
+
+;; 1=wikilink, 2=tag, 3=block-ref UUID
+(def ^:private link-regex
+  "\\[\\[([^\\]]+)\\]\\]|#([^ \\n\\t#\\[\\]]+)|\\(\\(([a-f0-9\\-]{36})\\)\\)")
+
+(def ^:private prop-regex #"^([^:\n]+)::\s*(.*)$")
+
+(defn parse-text-spans
+  "Split text into typed tokens: :text | :link | :tag | :block-ref."
+  [text]
+  (let [text (or text "")
+        regex (dart:core/RegExp. link-regex)
+        matches (vec (.allMatches regex text))]
+    (if (empty? matches)
+      [{:type :text :content text}]
+      (loop [i 0
+             last-idx 0
+             acc []]
+        (if (< i (count matches))
+          (let [^dart:core/RegExpMatch m (nth matches i)
+                start (.start m)
+                end (.end m)
+                link-text (.group m 1)
+                tag-text (.group m 2)
+                uuid-text (.group m 3)
+                prefix-text (.substring text last-idx start)
+                acc (if (not-empty prefix-text)
+                      (conj acc {:type :text :content prefix-text})
+                      acc)
+                token (cond
+                        link-text {:type :link :content link-text}
+                        tag-text  {:type :tag :content tag-text}
+                        uuid-text {:type :block-ref :content uuid-text})]
+            (recur (inc i) end (conj acc token)))
+          (let [suffix (.substring text last-idx)]
+            (if (not-empty suffix)
+              (conj acc {:type :text :content suffix})
+              acc)))))))
+
+(defn parse-properties
+  "Leading consecutive `key:: value` lines → ordered map of string → string."
+  [text]
+  (if (str/blank? text)
+    {}
+    (let [lines (str/split-lines text)]
+      (loop [acc {}
+             remaining lines]
+        (if (empty? remaining)
+          acc
+          (let [line (str/trim (first remaining))
+                match (re-matches prop-regex line)]
+            (if match
+              (recur (assoc acc (str/trim (nth match 1)) (str/trim (nth match 2)))
+                     (rest remaining))
+              acc)))))))
+
+(defn strip-properties
+  "Drop leading property lines; return body text for the reader."
+  [text]
+  (if (str/blank? text)
+    ""
+    (let [lines (str/split-lines text)]
+      (loop [remaining lines]
+        (if (empty? remaining)
+          ""
+          (let [line (str/trim (first remaining))]
+            (if (re-matches prop-regex line)
+              (recur (rest remaining))
+              (str/join "\n" remaining))))))))
+
+(defn parse-all-references
+  "Extract page/tag names and block UUIDs → `{:pages [...] :blocks [...]}`."
+  [text]
+  (let [re (dart:core/RegExp. link-regex)
+        matches (vec (.allMatches re (or text "")))]
+    (reduce (fn [acc ^dart:core/RegExpMatch m]
+              (let [link (.group m 1)
+                    tag  (.group m 2)
+                    uuid (.group m 3)]
+                (cond
+                  link (let [p (str/trim link)]
+                         (if (str/blank? p) acc (update acc :pages conj p)))
+                  tag  (let [p (str/trim tag)]
+                         (if (str/blank? p) acc (update acc :pages conj p)))
+                  uuid (update acc :blocks conj uuid)
+                  :else acc)))
+            {:pages [] :blocks []}
+            matches)))
+
+(defn parse-bidirectional-links
+  "Page/tag names only (alias for link-graph callers)."
+  [text]
+  (:pages (parse-all-references text)))

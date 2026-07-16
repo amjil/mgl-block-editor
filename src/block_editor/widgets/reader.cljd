@@ -1,31 +1,93 @@
 (ns block-editor.widgets.reader
-  "Inactive (read-mode) block rendering — static Mongol text, no IME/selectable mount."
+  "Inactive (read-mode) block rendering — static Mongol text, no IME/selectable mount.
+   Supports wiki markup (`[[link]]`, `#tag`, `((uuid))`) and leading `key:: value` properties."
   (:require ["package:flutter/material.dart" :as m]
             ["package:mongol/mongol.dart" :as mongol]
             [rich-editor.config :as rich-config]
-            [rich-editor.rendering.text-renderer :as text-renderer]))
+            [block-editor.utils.inline :as inline]
+            [block-editor.utils.highlighter :as highlighter]))
 
 (defn find-plugin
   "Return the first plugin whose :type matches block-type, or nil."
   [plugins block-type]
   (first (filter #(= (:type %) block-type) plugins)))
 
-(defn- default-read-text
-  "Rich-text read view from :content / :content-spans."
-  [block base-style cfg on-link-tap]
-  (let [content (or (:content block) "")
-        spans (:content-spans block [])
-        cfg* (if on-link-tap (assoc cfg :on-tag-tap on-link-tap) cfg)]
-    (m/Flexible
-     .fit m.FlexFit/loose
+(defn wiki-mongol-text
+  "Tappable wiki-markup MongolText.rich (no Flex wrapper — callers choose Expanded/Flexible)."
+  [text base-style on-link-tap]
+  (mongol/MongolText.rich
+   (m/TextSpan
+    .children (highlighter/build-wiki-text-spans text base-style on-link-tap))))
+
+(defn wiki-mongol-text-flex
+  "Same as wiki-mongol-text, wrapped in Expanded so Mongol text wraps within
+   a height-bounded Column (avoids RenderFlex overflow in vertical script)."
+  [text base-style on-link-tap]
+  (m/Expanded
+   .child (wiki-mongol-text text base-style on-link-tap)))
+
+(defn- render-properties-view
+  "Leading `key:: value` panel; values also support wiki markup."
+  [props on-link-tap]
+  (if (empty? props)
+    (m/SizedBox.shrink)
+    (m/Container
+     .margin (m.EdgeInsets/only .bottom 12.0)
+     .padding (m.EdgeInsets/all 8.0)
+     .decoration (m/BoxDecoration
+                  .color (-> m.Colors/black (.withOpacity 0.04))
+                  .borderRadius (m.BorderRadius/circular 4.0)
+                  .border (m/Border.all .color (-> m.Colors/black (.withOpacity 0.12))))
      .child
-     (mongol/MongolText.rich
-      (text-renderer/build-rich-text-span content spans base-style cfg*)))))
+     (m/Column
+      .crossAxisAlignment m.CrossAxisAlignment/start
+      .mainAxisSize m.MainAxisSize/min
+      .children
+      (vec
+       (map (fn [[k v]]
+              (m/Padding
+               .padding (m.EdgeInsets/symmetric .vertical 2.0)
+               .child
+               (mongol/MongolRichText
+                .text
+                (m/TextSpan
+                 .children
+                 [(m/TextSpan
+                   .text (str k ": ")
+                   .style (m/TextStyle .color m.Colors/black54
+                                       .fontSize 12.0
+                                       .fontWeight m.FontWeight/bold
+                                       .fontFamily "OyunQaganTig"))
+                  (m/TextSpan
+                   .children
+                   (highlighter/build-wiki-text-spans
+                    v
+                    (m/TextStyle .color m.Colors/black87
+                                 .fontSize 12.0
+                                 .fontFamily "OyunQaganTig")
+                    on-link-tap))]))))
+            props))))))
+
+(defn- default-read-text
+  "Wiki markup + optional properties panel. Fills parent height so body text can wrap."
+  [block base-style on-link-tap]
+  (let [raw (or (:content block) "")
+        props (inline/parse-properties raw)
+        clean (inline/strip-properties raw)]
+    (m/Column
+     .mainAxisSize m.MainAxisSize/max
+     .crossAxisAlignment m.CrossAxisAlignment/start
+     .children
+     (filterv some?
+              [(when (seq props)
+                 (render-properties-view props on-link-tap))
+               (wiki-mongol-text-flex clean base-style on-link-tap)]))))
 
 (defn block-reader-view
   "Static block view for inactive (unfocused) blocks.
 
-   Prefers plugin `:render-read`; otherwise default rich text from content-spans.
+   Prefers plugin `:render-read`; otherwise wiki-aware default text.
+   Fills parent height (mainAxisSize/max) so nested Expanded text wraps.
    `!state` is passed as the 4th arg to `:render-read` (e.g. image width-ratio)."
   ([block plugins cfg]
    (block-reader-view block plugins cfg nil nil))
@@ -35,10 +97,13 @@
    (let [b-type (or (:type block) :paragraph)
          base-style (rich-config/get-block-style cfg b-type)
          plugin (find-plugin plugins b-type)]
+     ;; Fill parent height (block_tree wraps this in Expanded) so body text wraps.
      (m/Column
-      .mainAxisSize m.MainAxisSize/min
+      .mainAxisSize m.MainAxisSize/max
       .crossAxisAlignment m.CrossAxisAlignment/start
       .children
-      [(if (and plugin (:render-read plugin))
-         ((:render-read plugin) block base-style on-link-tap !state)
-         (default-read-text block base-style cfg on-link-tap))]))))
+      [(m/Expanded
+        .child
+        (if (and plugin (:render-read plugin))
+          ((:render-read plugin) block base-style on-link-tap !state)
+          (default-read-text block base-style on-link-tap)))]))))

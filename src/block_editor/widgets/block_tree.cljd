@@ -9,6 +9,7 @@
             [block-editor.utils.text :as text]
             [block-editor.utils.collapse :as collapse]
             [block-editor.widgets.reader :as reader]
+            [block-editor.widgets.slash-menu :as slash-menu]
             [rich-editor.config :as rich-config]
             [rich-editor.commands.editor-commands :as editor-cmd]
             [rich-editor.components.node-view :as node-view]))
@@ -38,6 +39,15 @@
   (when plugin
     (or (:render plugin) (:render-edit plugin))))
 
+(defn- with-slash-anchor
+  "Bind LayerLink so slash / autocomplete overlays follow this block."
+  [is-active? child]
+  (if is-active?
+    (m/CompositedTransformTarget
+     .link (slash-menu/slash-layer-link)
+     .child child)
+    child))
+
 (defn- render-edit-content
   "Active/edit-mode body: plugin :render, text block-node, or custom atomic renderer."
   [id !state idx cfg block is-active? style]
@@ -52,7 +62,7 @@
         placeholder (get-placeholder-text block-type)]
     (cond
       edit-render
-      (edit-render id !state idx cfg)
+      (with-slash-anchor is-active? (edit-render id !state idx cfg))
 
       is-text?
       (let [text-stack
@@ -70,7 +80,7 @@
                                                          (m/TextStyle .color m.Colors/black26)))))
                 (m/SizedBox.shrink))
               (node-view/block-node id !state idx cfg)])]
-        text-stack)
+        (with-slash-anchor is-active? text-stack))
 
       :else
       (if-let [custom-render (get-in cfg [:custom-block-renderers block-type])]

@@ -1,8 +1,8 @@
 (ns block-editor.plugins.blockquote
   "Blockquote plugin — accent bar via :text-block-wrapper; static read chrome."
   (:require ["package:flutter/material.dart" :as m]
-            ["package:mongol/mongol.dart" :as mongol]
-            [rich-editor.rendering.text-renderer :as text-renderer]))
+            [block-editor.widgets.reader :as reader]
+            [block-editor.utils.inline :as inline]))
 
 (defn wrap-blockquote
   "Wraps the editable text widget with a quote accent bar."
@@ -15,20 +15,17 @@
 
 (defn- render-blockquote-read
   [block base-style on-link-tap _!state]
-  (let [content (or (:content block) "")
-        spans (:content-spans block [])
-        cfg (cond-> {}
-              on-link-tap (assoc :on-tag-tap on-link-tap))]
+  (let [clean (inline/strip-properties (or (:content block) ""))]
     (m/Container
      .padding (m.EdgeInsets/only .top 12.0)
      .decoration (m/BoxDecoration.
                   .border (m/Border. .top (m/BorderSide. .width 4.0 .color m.Colors/grey)))
      .child
-     (m/Flexible
-      .fit m.FlexFit/loose
-      .child
-      (mongol/MongolText.rich
-       (text-renderer/build-rich-text-span content spans base-style cfg))))))
+     (m/Column
+      .mainAxisSize m.MainAxisSize/max
+      .crossAxisAlignment m.CrossAxisAlignment/start
+      .children
+      [(reader/wiki-mongol-text-flex clean base-style on-link-tap)]))))
 
 (defn blockquote-plugin
   "Blockquote text block. Edit uses :text-block-wrapper around block-node."

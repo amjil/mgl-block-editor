@@ -1,11 +1,20 @@
 (ns block-editor.widgets.slash-menu
   "A floating command palette triggered by typing '/'.
    Customized for Traditional Mongolian: Horizontal scrolling with vertical text.
-   Supports type-change commands and :action :insert (date/time) commands."
+   Supports type-change commands and :action :insert (date/time) commands.
+   Positioned via CompositedTransformFollower on the active block LayerLink."
   (:require ["package:flutter/material.dart" :as m]
             ["package:mongol/mongol.dart" :as mgl]
             [cljd.flutter :as f]
             [block-editor.utils.date :as date]))
+
+;; Bound to the active block via CompositedTransformTarget (see block-tree).
+(defonce !slash-layer-link (atom (m/LayerLink.)))
+
+(defn slash-layer-link
+  "LayerLink shared by slash menu / wikilink autocomplete followers."
+  []
+  @!slash-layer-link)
 
 (def type-commands
   [{:type :paragraph :title "ᠡᠬᠡ ᠪᠢᠴᠢᠭ" :icon m.Icons/notes :keywords ["text" "paragraph" "p"]}
@@ -14,7 +23,7 @@
    {:type :heading-3 :title "ᠭᠤᠷᠪᠠᠳᠠᠭᠴᠢ ᠭᠠᠷᠴᠠᠭ" :icon m.Icons/text_fields :keywords ["h3" "heading"]}
    {:type :blockquote :title "ᠢᠰᠢᠯᠡᠯ" :icon m.Icons/format_quote :keywords ["quote" "q"]}
    {:type :list-item :title "ᠵᠢᠭᠰᠠᠭᠠᠯᠲᠠ" :icon m.Icons/format_list_bulleted :keywords ["list" "bullet"]}
-   {:type :task :title "ᠠᠵᠢᠯ" :icon m.Icons/check_box :keywords ["task" "todo" "[]" "check"]}
+   {:type :task :title "ᠠᠵᠢᠯ" :icon m.Icons/check_box :keywords ["task" "todo" "check"]}
    {:type :divider :title "ᠲᠤᠰᠠᠭᠠᠷᠯᠠᠭᠴᠢ" :icon m.Icons/horizontal_rule :keywords ["divider" "line"]}
    {:type :image :title "ᠵᠢᠷᠤᠭ" :icon m.Icons/image :keywords ["image" "img" "pic"]}
    {:type :table :title "ᠬᠦᠰᠦᠨᠦᠭ" :icon m.Icons/table_chart :keywords ["table" "grid"]}])
@@ -32,7 +41,6 @@
 (defn- all-commands []
   (into type-commands (insert-commands)))
 
-;; Kept for callers that expect the static list name
 (def available-commands type-commands)
 
 (defn- filter-commands [query]
@@ -45,71 +53,71 @@
                     (some #(clojure.string/includes? % q) keywords)))
               cmds))))
 
-(defn slash-overlay 
-  "A floating widget that listens to text input and appears when '/' is typed."
+(defn- slash-item-widget [!state active-id ops item]
+  (let [{:keys [title icon]} item]
+    (m/InkWell
+     .onTap (fn []
+              (when-let [execute-fn (:execute-slash-command! ops)]
+                (execute-fn !state active-id item)))
+     .child
+     (m/Padding
+      .padding (m.EdgeInsets/symmetric .horizontal 16.0 .vertical 16.0)
+      .child
+      (m/Column
+       .mainAxisAlignment m.MainAxisAlignment/start
+       .mainAxisSize m.MainAxisSize/min
+       .children
+       [(m/Container
+         .padding (m.EdgeInsets/all 8.0)
+         .decoration (m/BoxDecoration
+                      .color (-> m.Colors/grey (.withOpacity 0.1))
+                      .shape m.BoxShape/circle)
+         .child (m/Icon icon .color m.Colors/black87 .size 20.0))
+        (m/SizedBox .height 12.0)
+        (m/Flexible
+         .child
+         (mgl/MongolText
+          title
+          .style (m/TextStyle
+                  .fontWeight m.FontWeight/w500
+                  .fontSize 15.0
+                  .color m.Colors/black87)))])))))
+
+(defn- slash-menu-panel [!state active-id filtered-items ops]
+  (m/Material
+   .elevation 24.0
+   .borderRadius (m/BorderRadius.circular 12.0)
+   .clipBehavior m.Clip/antiAlias
+   .color m.Colors/white
+   .child
+   (m/ConstrainedBox
+    .constraints (m/BoxConstraints .maxHeight 220.0 .minHeight 100.0)
+    .child
+    (m/SingleChildScrollView
+     .scrollDirection m.Axis/horizontal
+     .child
+     (m/Row
+      .mainAxisSize m.MainAxisSize/min
+      .crossAxisAlignment m.CrossAxisAlignment/start
+      .children
+      (mapv #(slash-item-widget !state active-id ops %) filtered-items))))))
+
+(defn slash-overlay
+  "Follows the active block via LayerLink when content ends with `/[query]`."
   [!state cfg]
   (f/widget
    :watch [state-val !state]
    (let [active-id (:active-block-id state-val)
          content (if active-id (get-in state-val [:blocks active-id :content] "") "")
-         
-         ;; Regex checks if the text ends with '/' followed by optional letters
          match (re-find #"/([a-zA-Z0-9]*)$" content)
-         
          is-active? (some? match)
          query (if match (second match) "")
          filtered-items (filter-commands query)
          ops (:block-ops cfg)]
-     
      (if (and is-active? (seq filtered-items))
-       (m/Center
-        .child
-        (m/Material
-         .elevation 24.0
-         .borderRadius (m/BorderRadius.circular 12.0)
-         .clipBehavior m.Clip/antiAlias
-         .color m.Colors/white
-         .child
-         (m/ConstrainedBox
-          .constraints (m/BoxConstraints .maxHeight 220.0 .minHeight 100.0)
-          .child
-          (m/SingleChildScrollView
-           .scrollDirection m.Axis/horizontal
-           .child
-           (m/Row
-            .mainAxisSize m.MainAxisSize/min
-            .crossAxisAlignment m.CrossAxisAlignment/start
-            .children
-            (mapv (fn [item]
-                    (let [{:keys [title icon]} item]
-                      (m/InkWell
-                       .onTap (fn []
-                                (when-let [execute-fn (:execute-slash-command! ops)]
-                                  (execute-fn !state active-id item)))
-                       .child
-                       (m/Padding
-                        .padding (m.EdgeInsets/symmetric .horizontal 16.0 .vertical 16.0)
-                        .child
-                        (m/Column
-                         .mainAxisAlignment m.MainAxisAlignment/start
-                         .mainAxisSize m.MainAxisSize/min
-                         .children
-                         [(m/Container
-                           .padding (m.EdgeInsets/all 8.0)
-                           .decoration (m/BoxDecoration
-                                        .color (-> m.Colors/grey (.withOpacity 0.1))
-                                        .shape m.BoxShape/circle)
-                           .child (m/Icon icon .color m.Colors/black87 .size 20.0))
-                          (m/SizedBox .height 12.0)
-
-                          (m/Flexible
-                           .child
-                           (mgl/MongolText
-                            title
-                            .style (m/TextStyle
-                                    .fontWeight m.FontWeight/w500
-                                    .fontSize 15.0
-                                    .color m.Colors/black87)))])))))
-                  filtered-items))))))
-       
+       (m/CompositedTransformFollower
+        .link (slash-layer-link)
+        .showWhenUnlinked false
+        .offset (m/Offset. 12.0 8.0)
+        .child (slash-menu-panel !state active-id filtered-items ops))
        (m/SizedBox.shrink)))))

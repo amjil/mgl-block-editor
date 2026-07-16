@@ -1,0 +1,118 @@
+(ns block-editor.widgets.autocomplete
+  "Floating `[[wikilink` autocomplete. Candidate source is injected via
+   `:link-suggestions` on editor-config — `(fn [query] -> seq of strings)`.
+   Extracted from notes-app.ui.autocomplete (DB wiring stays in the host)."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:mongol/mongol.dart" :as mongol]
+            [cljd.flutter :as f]
+            [block-editor.widgets.slash-menu :as slash-menu]
+            [rich-editor.commands.transaction :as tx]
+            [rich-editor.commands.editor-commands :as editor-cmd]))
+
+(defonce !ac-state
+  (atom {:active? false :query "" :block-id nil}))
+
+(defonce !ac-sniffer-installed (atom #{}))
+
+(defn close-menu! []
+  (when (:active? @!ac-state)
+    (swap! !ac-state assoc :active? false :query "" :block-id nil)))
+
+(defn- handle-select!
+  [!state page-name]
+  (let [{:keys [block-id query]} @!ac-state
+        block (get-in @!state [:blocks block-id])
+        old-text (or (:content block) "")
+        target-str (str "[[" query)
+        last-idx (.lastIndexOf old-text target-str)
+        new-text (if (>= last-idx 0)
+                   (str (.substring old-text 0 last-idx) "[[" page-name "]] ")
+                   old-text)]
+    (tx/commit-transaction!
+     !state
+     (tx/make-transaction :ops [(tx/update-data-op block-id {:content new-text})]
+                          :after-selection nil))
+    (editor-cmd/focus-block !state block-id (count new-text))
+    (close-menu!)))
+
+(defn install-sniffer!
+  "Watch active block content for unclosed `[[…`. No-op when suggestions missing.
+   Installed once per state atom."
+  [!state]
+  (when-not (contains? @!ac-sniffer-installed !state)
+    (swap! !ac-sniffer-installed conj !state)
+    (add-watch
+     !state :ac-sniffer
+     (fn [_ _ _ new-state]
+       (let [cfg (:editor-config new-state)
+             suggestions (:link-suggestions cfg)]
+         (if-not suggestions
+           (close-menu!)
+           (let [active-id (:active-block-id new-state)]
+             (if-not active-id
+               (close-menu!)
+               (let [content (get-in new-state [:blocks active-id :content] "")
+                     regex (dart:core/RegExp. "\\[\\[([^\\]]*)$")
+                     match (first (.allMatches regex content))]
+                 (if match
+                   (reset! !ac-state {:active? true
+                                      :query (or (.group match 1) "")
+                                      :block-id active-id})
+                   (close-menu!)))))))))))
+
+(defn- suggestion-item [!state p-name]
+  (m/InkWell
+   .onTap #(handle-select! !state p-name)
+   .child
+   (m/Container
+    .padding (m.EdgeInsets/symmetric .vertical 20.0 .horizontal 16.0)
+    .decoration (m/BoxDecoration
+                 .border (m/Border .right
+                                   (m/BorderSide .color (-> m.Colors/white
+                                                            (.withOpacity 0.15)))))
+    .child
+    (mongol/MongolText p-name
+                       .style (m/TextStyle .fontFamily "OyunQaganTig"
+                                           .fontSize 16.0
+                                           .color m.Colors/blue)))))
+
+(defn- suggestions-panel [!state pages]
+  (m/Material
+   .elevation 8.0
+   .borderRadius (m.BorderRadius/circular 8.0)
+   .child
+   (m/Container
+    .height 240.0
+    .decoration (m/BoxDecoration
+                 .color (-> m.Colors/grey .-shade800)
+                 .borderRadius (m.BorderRadius/circular 8.0)
+                 .border (m/Border.all .color (-> m.Colors/blue (.withOpacity 0.5))))
+    .child
+    (if (empty? pages)
+      (m/Padding
+       .padding (m.EdgeInsets/all 16.0)
+       .child (mongol/MongolText "No matches"
+                                 .style (m/TextStyle .color m.Colors/white54
+                                                     .fontFamily "OyunQaganTig")))
+      (m/ListView.builder
+       .scrollDirection m.Axis/horizontal
+       .itemCount (count pages)
+       .itemBuilder
+       (fn [_ i]
+         (suggestion-item !state (nth pages i))))))))
+
+(defn autocomplete-overlay
+  "CompositedTransformFollower menu. Requires slash LayerLink on the active block."
+  [!state cfg]
+  (f/widget
+   :watch [ac !ac-state]
+   (let [suggestions-fn (:link-suggestions cfg)]
+     (if-not (and (:active? ac) suggestions-fn)
+       (m/SizedBox.shrink)
+       (let [query (or (:query ac) "")
+             pages (vec (or (suggestions-fn query) []))]
+         (m/CompositedTransformFollower
+          .link (slash-menu/slash-layer-link)
+          .showWhenUnlinked false
+          .offset (m/Offset. 40.0 12.0)
+          .child (suggestions-panel !state pages)))))))

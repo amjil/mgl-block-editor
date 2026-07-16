@@ -1,11 +1,11 @@
 (ns block-editor.plugins.task
   "Task checkbox plugin — editable text + checkbox when active; static when inactive."
   (:require ["package:flutter/material.dart" :as m]
-            ["package:mongol/mongol.dart" :as mongol]
             [cljd.flutter :as f]
+            [block-editor.widgets.reader :as reader]
+            [block-editor.utils.inline :as inline]
             [rich-editor.components.node-view :as node-view]
-            [rich-editor.commands.transaction :as tx]
-            [rich-editor.rendering.text-renderer :as text-renderer]))
+            [rich-editor.commands.transaction :as tx]))
 
 (defn- block-checked?
   [block]
@@ -66,17 +66,14 @@
    :render-read
    (fn [block base-style on-link-tap _!state]
      (let [checked? (block-checked? block)
-           content (or (:content block) "")
-           spans (:content-spans block [])
+           clean (inline/strip-properties (or (:content block) ""))
            ^m/TextStyle style (if checked?
                                 (.copyWith ^m/TextStyle base-style
                                            .decoration m.TextDecoration/lineThrough
                                            .color m.Colors/grey)
-                                base-style)
-           cfg (cond-> {}
-                 on-link-tap (assoc :on-tag-tap on-link-tap))]
+                                base-style)]
        (m/Column
-        .mainAxisSize m.MainAxisSize/min
+        .mainAxisSize m.MainAxisSize/max
         .crossAxisAlignment m.CrossAxisAlignment/center
         .children
         [(m/Padding
@@ -85,8 +82,4 @@
           (m/Icon (if checked? m.Icons/check_box m.Icons/check_box_outline_blank)
                   .color (if checked? m.Colors/blue m.Colors/grey)
                   .size 20.0))
-         (m/Flexible
-          .fit m.FlexFit/loose
-          .child
-          (mongol/MongolText.rich
-           (text-renderer/build-rich-text-span content spans style cfg)))])))})
+         (reader/wiki-mongol-text-flex clean style on-link-tap)])))})

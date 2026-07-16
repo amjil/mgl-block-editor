@@ -10,6 +10,7 @@
             [block-editor.handlers.keyboard :as kb-handlers]
             [block-editor.widgets.block-tree :as block-tree]
             [block-editor.widgets.slash-menu :as slash-menu]
+            [block-editor.widgets.autocomplete :as autocomplete]
             [block-editor.widgets.selection-bar :as selection-bar]
             
             [rich-editor.config :as rich-config]
@@ -74,15 +75,17 @@
                     .borderRadius (m.BorderRadius/circular 2.0)))))))
 
 (defn- editor-stack
-  "Shared Stack layers: editor, marquee, slash menu, optional extras, bulk bar."
+  "Shared Stack layers: editor, marquee, slash, autocomplete, extras, bulk bar."
   [core-child !state cfg selecting? select-rect extras]
   (m/Stack
+   .clipBehavior m.Clip/none
    .children
    (vec (remove nil?
                 (concat
                  [core-child
                   (marquee-rect-overlay selecting? select-rect)
-                  (slash-menu/slash-overlay !state cfg)]
+                  (slash-menu/slash-overlay !state cfg)
+                  (autocomplete/autocomplete-overlay !state cfg)]
                  extras
                  [(selection-bar/bulk-action-bar !state)])))))
 
@@ -98,6 +101,8 @@
         !select-start (atom nil)
         !select-rect (atom nil)]
     (swap! !state assoc :editor-config cfg)
+    ;; `[[` autocomplete sniffer (no-op unless :link-suggestions is set)
+    (autocomplete/install-sniffer! !state)
 
     (f/widget
      :managed [editor-focus-node (m/FocusNode)

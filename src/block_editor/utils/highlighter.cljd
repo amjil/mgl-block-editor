@@ -1,0 +1,91 @@
+(ns block-editor.utils.highlighter
+  "Edit-mode wiki link Delta formats + read-mode tappable TextSpans.
+   Extracted from notes-app.ui.highlighter / reader span builder."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:flutter/gestures.dart" :as gestures]
+            [clojure.string :as str]
+            [block-editor.utils.inline :as inline]
+            [rich-editor.model.delta :as delta]))
+
+(def ^:private bidi-link-pattern "\\[\\[([^\\]]+)\\]\\]")
+
+(defn compute-link-formats
+  "Scan text → Delta retain ops highlighting closed `[[wikilinks]]`.
+   Keeps brackets visible (IME/caret friendly). Hosts can apply via middleware."
+  [text]
+  (if (str/blank? text)
+    []
+    (let [regex (dart:core/RegExp. bidi-link-pattern)
+          matches (seq (.allMatches regex text))]
+      (loop [ms matches
+             last-idx 0
+             ops []]
+        (if (empty? ms)
+          (let [remaining (- (count text) last-idx)]
+            (if (> remaining 0)
+              (conj ops (delta/retain remaining))
+              ops))
+          (let [^dart:core/RegExpMatch match (first ms)
+                start-idx (.-start match)
+                end-idx (.-end match)
+                match-len (- end-idx start-idx)
+                retain-len (- start-idx last-idx)
+                ops (if (> retain-len 0)
+                      (conj ops (delta/retain retain-len))
+                      ops)
+                ops (conj ops (delta/retain match-len
+                                            {:bidi-link true :color "#1E90FF"}))]
+            (recur (rest ms) end-idx ops)))))))
+
+(defn build-wiki-text-spans
+  "Parse wiki markup into tappable TextSpans for MongolText.rich.
+   `on-link-tap` receives a page/tag string, or `{:type :block :id uuid}`."
+  [raw-text base-style on-link-tap]
+  (let [tokens (inline/parse-text-spans (or raw-text ""))]
+    (if (empty? tokens)
+      [(m/TextSpan .text "" .style base-style)]
+      (mapv
+       (fn [{:keys [type content]}]
+         (case type
+           :text
+           (m/TextSpan .text content .style base-style)
+
+           :link
+           (m/TextSpan
+            .text (str "[[" content "]]")
+            .style (.copyWith ^m/TextStyle base-style
+                              .color m.Colors/blue
+                              .fontWeight m.FontWeight/bold
+                              .decoration m.TextDecoration/underline)
+            .recognizer (when on-link-tap
+                          (let [r (gestures/TapGestureRecognizer.)]
+                            (set! (.-onTap r) #(on-link-tap content))
+                            r)))
+
+           :tag
+           (m/TextSpan
+            .text (str "#" content)
+            .style (.copyWith ^m/TextStyle base-style
+                              .color m.Colors/purple
+                              .fontStyle m.FontStyle/italic)
+            .recognizer (when on-link-tap
+                          (let [r (gestures/TapGestureRecognizer.)]
+                            (set! (.-onTap r) #(on-link-tap content))
+                            r)))
+
+           :block-ref
+           (m/TextSpan
+            .text (str "⚓ " (apply str (take 8 content)) "…")
+            .style (.copyWith ^m/TextStyle base-style
+                              .color m.Colors/black54
+                              .fontSize (max 10.0 (- (or (.-fontSize base-style) 16.0) 2.0))
+                              .backgroundColor (-> m.Colors/black (.withOpacity 0.06))
+                              .decoration m.TextDecoration/underline
+                              .decorationStyle m.TextDecorationStyle/dashed)
+            .recognizer (when on-link-tap
+                          (let [r (gestures/TapGestureRecognizer.)]
+                            (set! (.-onTap r) #(on-link-tap {:type :block :id content}))
+                            r)))
+
+           (m/TextSpan .text (str content) .style base-style)))
+       tokens))))
