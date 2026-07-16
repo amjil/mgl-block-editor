@@ -6,7 +6,7 @@
             [rich-editor.commands.editor-commands :as editor-cmd]
             [rich-editor.commands.transaction :as tx]
             [block-editor.utils.collapse :as collapse]
-            [block-editor.utils.history :as history] ;; 🌟 引入历史管理器
+            [block-editor.utils.history :as history] ;; 🌟 Import history manager
             ["package:flutter/material.dart" :as m]
             [clojure.string :as str]))
 
@@ -35,7 +35,7 @@
 (defn split-block-at-cursor! 
   "Splits block and inserts the new block as a sibling at the current depth."
   [!state block-id]
-  (history/record-snapshot! !state) ;; 🌟 打快照：结构拆分
+  (history/record-snapshot! !state) ;; 🌟 Snapshot: structural split
   (let [sel (get-in @!state [:blocks block-id :selection])
         offset (if sel (.-extentOffset sel) 0)
         new-id (str "b-" (random-uuid))]
@@ -72,7 +72,7 @@
   (let [state-val @!state
         {:keys [parent-id index siblings]} (find-parent-info state-val block-id)]
     (when (> index 0)
-      (history/record-snapshot! !state) ;; 🌟 打快照：结构合并
+      (history/record-snapshot! !state) ;; 🌟 Snapshot: structural merge
       (let [prev-id (nth siblings (dec index))
             prev-block (get-in state-val [:blocks prev-id])
             curr-block (get-in state-val [:blocks block-id])
@@ -105,7 +105,7 @@
 (defn delete-cross-block-selection! 
   "Delegates cross-block text deletion to the rich text engine."
   [!state g-sel]
-  (history/record-snapshot! !state) ;; 🌟 打快照：跨块删除
+  (history/record-snapshot! !state) ;; 🌟 Snapshot: cross-block deletion
   (editor-cmd/delete-global-selection! !state)
   (let [active-id (:active-block-id @!state)
         sel (get-in @!state [:blocks active-id :selection])]
@@ -118,7 +118,7 @@
 (defn indent-block! 
   "Moves a block into the :children array of its immediate previous sibling."
   [!state block-id]
-  (history/record-snapshot! !state) ;; 🌟 打快照：降级缩进
+  (history/record-snapshot! !state) ;; 🌟 Snapshot: indent deeper
   (swap! !state
          (fn [s]
            (if-let [{:keys [parent-id index siblings]} (find-parent-info s block-id)]
@@ -134,7 +134,7 @@
 (defn outdent-block! 
   "Moves a block out of its parent's :children array, making it a sibling of its parent."
   [!state block-id]
-  (history/record-snapshot! !state) ;; 🌟 打快照：升级反缩进
+  (history/record-snapshot! !state) ;; 🌟 Snapshot: outdent upward
   (swap! !state
          (fn [s]
            (if-let [{:keys [parent-id index]} (find-parent-info s block-id)]
@@ -157,7 +157,7 @@
   "Moves a block in the :root vector from old-index to new-index.
    Currently only supports reordering at the root level."
   [!state old-index new-index]
-  (history/record-snapshot! !state) ;; 🌟 打快照：拖拽重排
+  (history/record-snapshot! !state) ;; 🌟 Snapshot: drag reorder
   (swap! !state
          (fn [s]
            (let [root (:root s)
@@ -173,7 +173,7 @@
 (defn delete-block! 
   "Removes a block completely from the document tree."
   [!state block-id]
-  (history/record-snapshot! !state) ;; 🌟 打快照：删除单个块
+  (history/record-snapshot! !state) ;; 🌟 Snapshot: delete single block
   (swap! !state
          (fn [s]
            (if-let [{:keys [parent-id]} (find-parent-info s block-id)]
@@ -191,7 +191,7 @@
 (defn duplicate-block! 
   "Copies the block and inserts it immediately after the original as a sibling."
   [!state block-id]
-  (history/record-snapshot! !state) ;; 🌟 打快照：复制块
+  (history/record-snapshot! !state) ;; 🌟 Snapshot: duplicate block
   (swap! !state
          (fn [s]
            (if-let [{:keys [parent-id index]} (find-parent-info s block-id)]
@@ -209,14 +209,14 @@
 (defn convert-block! 
   "Changes the type of the block (e.g., from paragraph to heading-1)."
   [!state block-id new-type]
-  (history/record-snapshot! !state) ;; 🌟 打快照：转换块类型
+  (history/record-snapshot! !state) ;; 🌟 Snapshot: convert block type
   (swap! !state assoc-in [:blocks block-id :type] new-type))
 
 (defn convert-blocks!
   "Bulk type change for the given block ids (multi-select / marquee)."
   [!state block-ids new-type]
   (when (seq block-ids)
-    (history/record-snapshot! !state) ;; 🌟 打快照：批量转换类型
+    (history/record-snapshot! !state) ;; 🌟 Snapshot: bulk convert type
     (swap! !state update :blocks
            (fn [blocks]
              (reduce (fn [acc id]
@@ -233,7 +233,7 @@
 (defn toggle-block-selection! 
   "Adds or removes a block from the multi-selection set. Enters Object Selection Mode."
   [!state block-id]
-  ;; UI 临时状态选择，无需打入撤销历史栈
+  ;; Temporary UI selection state; do not include it in undo history
   (swap! !state
          (fn [s]
            (let [sel (:selected-block-ids s #{})
@@ -258,9 +258,9 @@
   "Bulk deletes multiple blocks."
   [!state block-ids]
   (when (seq block-ids)
-    (history/record-snapshot! !state) ;; 🌟 打快照：批量删除
+    (history/record-snapshot! !state) ;; 🌟 Snapshot: bulk delete
     (doseq [id block-ids]
-      ;; 内部直接去调用底层的删除状态更新，不再重复打快照
+      ;; Reuse the low-level delete state update directly to avoid duplicate snapshots
       (swap! !state
              (fn [s]
                (if-let [{:keys [parent-id]} (find-parent-info s id)]
@@ -275,7 +275,7 @@
   "Bulk duplicates multiple blocks."
   [!state block-ids]
   (when (seq block-ids)
-    (history/record-snapshot! !state) ;; 🌟 打快照：批量复制
+    (history/record-snapshot! !state) ;; 🌟 Snapshot: bulk duplicate
     (doseq [id block-ids]
       (duplicate-block! !state id))
     (swap! !state assoc :selected-block-ids #{})))
@@ -285,11 +285,11 @@
    order so consecutive selections nest more predictably."
   [!state block-ids]
   (when (seq block-ids)
-    (history/record-snapshot! !state) ;; 🌟 打快照：批量缩进
+    (history/record-snapshot! !state) ;; 🌟 Snapshot: bulk indent
     (let [visible (collapse/get-visible-root (:root @!state) (:blocks @!state))
           ordered (filterv #(contains? (set block-ids) %) (reverse visible))]
       (doseq [id ordered]
-        ;; 内部直接复用 indent-block!，因为我们已经在开头打包了统一快照
+        ;; Reuse indent logic internally because we already captured one shared snapshot up front
         (swap! !state
                (fn [s]
                  (if-let [{:keys [parent-id index siblings]} (find-parent-info s id)]
@@ -306,7 +306,7 @@
   "Bulk tree-outdent (Shift+Tab) for selected blocks."
   [!state block-ids]
   (when (seq block-ids)
-    (history/record-snapshot! !state) ;; 🌟 打快照：批量反缩进
+    (history/record-snapshot! !state) ;; 🌟 Snapshot: bulk outdent
     (let [visible (collapse/get-visible-root (:root @!state) (:blocks @!state))
           ordered (filterv #(contains? (set block-ids) %) visible)]
       (doseq [id ordered]
@@ -332,7 +332,7 @@
 (defn- execute-slash-insert!
   "Replace trailing `/query` with insert value (e.g. [[2026-07-15]])."
   [!state block-id cmd]
-  (history/record-snapshot! !state) ;; 🌟 打快照：Slash 命令插入内容
+  (history/record-snapshot! !state) ;; 🌟 Snapshot: slash command insert
   (let [block (get-in @!state [:blocks block-id])
         old-content (or (:content block) "")
         value (if (:value-fn cmd) ((:value-fn cmd)) (:value cmd ""))
@@ -348,7 +348,7 @@
   "Removes the '/' trigger and converts the block. If converting to an atomic
    block (Image/Divider) and the block already contains text, it splits first."
   [!state block-id command-type]
-  (history/record-snapshot! !state) ;; 🌟 打快照：Slash 命令切换类型
+  (history/record-snapshot! !state) ;; 🌟 Snapshot: slash command type change
   (let [state-val @!state
         block (get-in state-val [:blocks block-id])
         content (:content block "")

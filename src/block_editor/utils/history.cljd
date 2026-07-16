@@ -3,55 +3,57 @@
    Leverages Clojure's immutable data structures for zero-cost Undo/Redo."
   (:require [cljd.flutter :as f]))
 
-;; 🌟 连续打字的防抖时间窗口（毫秒）。800ms 是打字体验的甜点值。
+;; 🌟 Debounce window for continuous typing (ms). 800ms feels like a sweet spot.
 (def ^:private debounce-interval-ms 800)
 (def ^:private max-history-depth 100)
 
 (defn- capture-snapshot
-  "提取纯净的文档快照。
-   采用'黑名单'模式，自动支持未来新增的 Block 状态，只需剔除 UI 临时状态。"
+  "Capture a clean document snapshot.
+   Uses a blacklist approach so newly added block state is supported automatically,
+   as long as temporary UI state is excluded."
   [state]
   (dissoc state 
-          :history                     ;; 必须剔除历史记录自身，防止无限嵌套
-          :editor-config               ;; 静态配置不存
-          :external-keyboard-delegate  ;; 临时交互委托
-          :cursor-visible              ;; 光标闪烁状态
-          :typing-attributes))         ;; 临时的输入法高亮状态
+          :history                     ;; Must exclude history itself to prevent infinite nesting
+          :editor-config               ;; Static config should not be stored
+          :external-keyboard-delegate  ;; Temporary interaction delegate
+          :cursor-visible              ;; Cursor blink state
+          :typing-attributes))         ;; Temporary IME highlight state
 
 (defn push-history
-  "纯函数：将当前状态推入历史栈。
-   - merge?: true (防抖打字合并), false (结构性操作强制打快照)"
+  "Pure function: push the current state into the history stack.
+   - merge?: true (debounced typing merge), false (force a snapshot for structural edits)"
   [state merge?]
   (let [now (.-millisecondsSinceEpoch (dart:core/DateTime.now))
         history (or (:history state) {:undo-stack [] :redo-stack []})
         last-time (:last-edit-time history 0)]
 
     (if (and merge? (< (- now last-time) debounce-interval-ms))
-      ;; 🌟 命中防抖：在短时间内连续打字，不压新栈，只刷新最后修改时间
+      ;; 🌟 Debounce hit: during rapid typing, do not push a new entry; just refresh the timestamp
       (assoc state :history (assoc history :last-edit-time now))
 
-      ;; 🌟 强制保存：防抖超时，或发生了重大结构变更 (merge? = false)
+      ;; 🌟 Forced save: debounce timed out, or a major structural change occurred (merge? = false)
       (let [snapshot (capture-snapshot state)
             new-undo-stack (conj (:undo-stack history []) snapshot)
-            ;; 触达上限时，丢弃最老的记录以保护内存
+            ;; Drop the oldest entry when the cap is reached to protect memory
             trimmed-undo (if (> (count new-undo-stack) max-history-depth)
                            (vec (rest new-undo-stack))
                            new-undo-stack)]
         (assoc state :history
                (assoc history
                       :undo-stack trimmed-undo
-                      :redo-stack [] ;; 发生新操作，必须清空重做栈
+                      :redo-stack [] ;; Any new operation must clear the redo stack
                       :last-edit-time now))))))
 
 (defn undo
-  "纯函数：执行撤销。弹出撤销栈，将当前状态推入重做栈，并恢复快照。"
+  "Pure function: perform undo. Pop the undo stack, push the current state to redo,
+   and restore the saved snapshot."
   [state]
   (let [{:keys [undo-stack redo-stack] :as history} (:history state)]
     (if (empty? undo-stack)
       state
       (let [snapshot (last undo-stack)
             current-snapshot (capture-snapshot state)
-            ;; 🌟 恢复快照，并再次清理掉临时的输入法状态，防止幽灵光标
+            ;; 🌟 Restore the snapshot and clear temporary IME state again to avoid ghost cursors
             new-state (-> state
                           (merge snapshot)
                           (dissoc :typing-attributes))]
@@ -62,7 +64,8 @@
                       :last-edit-time 0))))))
 
 (defn redo
-  "纯函数：执行重做。弹出重做栈，将当前状态推入撤销栈，并恢复快照。"
+  "Pure function: perform redo. Pop the redo stack, push the current state to undo,
+   and restore the saved snapshot."
   [state]
   (let [{:keys [undo-stack redo-stack] :as history} (:history state)]
     (if (empty? redo-stack)
@@ -79,11 +82,12 @@
                       :last-edit-time 0))))))
 
 ;; =============================================================================
-;; 暴露给外部直接使用的命令 API
+;; Public command API exposed for external callers
 ;; =============================================================================
 
 (defn record-snapshot! 
-  "强制打一个历史快照（用于增删改块、缩进等结构性操作之前）"
+  "Force a history snapshot (used before structural operations such as
+   block insert/delete/update or indent changes)."
   [!state]
   (swap! !state push-history false))
 
