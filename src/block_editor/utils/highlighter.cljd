@@ -54,7 +54,7 @@
            (m/TextSpan
             .text (str "[[" content "]]")
             .style (.copyWith ^m/TextStyle base-style
-                              .color m.Colors/blue
+                              .color (m/Color 0xFF64B5F6)
                               .fontWeight m.FontWeight/bold
                               .decoration m.TextDecoration/underline)
             .recognizer (when on-link-tap
@@ -66,7 +66,7 @@
            (m/TextSpan
             .text (str "#" content)
             .style (.copyWith ^m/TextStyle base-style
-                              .color m.Colors/purple
+                              .color (m/Color 0xFFBA68C8)
                               .fontStyle m.FontStyle/italic)
             .recognizer (when on-link-tap
                           (let [r (gestures/TapGestureRecognizer.)]
@@ -77,9 +77,9 @@
            (m/TextSpan
             .text (str "⚓ " (apply str (take 8 content)) "…")
             .style (.copyWith ^m/TextStyle base-style
-                              .color m.Colors/black54
+                              .color (m/Color 0xFFB0BEC5)
                               .fontSize (max 10.0 (- (or (.-fontSize base-style) 16.0) 2.0))
-                              .backgroundColor (-> m.Colors/black (.withOpacity 0.06))
+                              .backgroundColor (m/Color 0xFF263238)
                               .decoration m.TextDecoration/underline
                               .decorationStyle m.TextDecorationStyle/dashed)
             .recognizer (when on-link-tap

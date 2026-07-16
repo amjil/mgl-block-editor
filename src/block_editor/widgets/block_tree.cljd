@@ -76,8 +76,8 @@
                  .child (m/IgnorePointer
                          .child (mgl/MongolText placeholder
                                                 .style (if style
-                                                         (.copyWith ^m/TextStyle style .color m.Colors/black26)
-                                                         (m/TextStyle .color m.Colors/black26)))))
+                                                         (.copyWith ^m/TextStyle style .color (m/Color 0xFF616161))
+                                                         (m/TextStyle .color (m/Color 0xFF616161))))))
                 (m/SizedBox.shrink))
               (node-view/block-node id !state idx cfg)])]
         (with-slash-anchor is-active? text-stack))

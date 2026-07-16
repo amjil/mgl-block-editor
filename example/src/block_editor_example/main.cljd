@@ -22,7 +22,7 @@
 ;; =============================================================================
 
 (defonce !doc-state
-  (atom {:root ["b-1" "b-2" "b-2b" "b-3"]
+  (atom {:root ["b-1" "b-2" "b-2b" "b-3" "b-4"]
          :active-block-id nil
          :cursor-visible false
          :external-keyboard-delegate nil
@@ -48,7 +48,7 @@
                           :children []}
                   "b-2" {:id "b-2"
                          :type :paragraph
-                         :content "Hohhot Road Trip Itinerary"
+                         :content "See [[Hohhot Trip]] and #travel — type [[ for suggestions"
                          :content-spans []
                          :children []}
                   "b-2b" {:id "b-2b"
@@ -61,28 +61,42 @@
                          :type :image
                          :data {:url "https://picsum.photos/400/200"
                                 :width-ratio 0.5}
+                         :children []}
+                  "b-4" {:id "b-4"
+                         :type :paragraph
+                         :content "status:: done\nnotes:: linked to [[Journal]]"
+                         :content-spans []
                          :children []}}}))
+
+(def ^:private demo-page-names
+  ["Hohhot Trip" "Journal" "Block Editor" "Travel Notes" "Today"])
+
+(defn- demo-link-suggestions [query]
+  (let [q (clojure.string/lower-case (or query ""))]
+    (filter #(clojure.string/includes? (clojure.string/lower-case %) q)
+            demo-page-names)))
 ;; =============================================================================
 ;; 2. Editor Configuration
 ;; =============================================================================
 
 (def my-editor-config
   {:text-block-types #{:paragraph :heading-1 :heading-2 :heading-3 :blockquote :list-item :task}
-   ;; Built-in plugins (task / blockquote / image / divider) are registered by build-config.
+   ;; Built-in plugins (task / blockquote / image / divider / table) are registered by build-config.
    :on-link-tap (fn [target] (println "link tap:" target))
+   :link-suggestions demo-link-suggestions
 
    :block-style (fn [b-type]
                   (case b-type
                     :heading-1 (m/TextStyle .fontSize 32.0
                                             .fontWeight m.FontWeight/bold
-                                            .color m.Colors/black87
+                                            .color (m/Color 0xFFF5F5F5)
                                             .fontFamily "OyunQaganTig")
-                    :heading-2 (m/TextStyle .fontSize 24.0 .fontWeight m.FontWeight/bold .color m.Colors/black87 .fontFamily "OyunQaganTig")
-                    :heading-3 (m/TextStyle .fontSize 20.0 .fontWeight m.FontWeight/w600 .color m.Colors/black87 .fontFamily "OyunQaganTig")
-                    :task      (m/TextStyle .fontSize 18.0 .color m.Colors/black87 .fontFamily "OyunQaganTig")
+                    :heading-2 (m/TextStyle .fontSize 24.0 .fontWeight m.FontWeight/bold .color (m/Color 0xFFF5F5F5) .fontFamily "OyunQaganTig")
+                    :heading-3 (m/TextStyle .fontSize 20.0 .fontWeight m.FontWeight/w600 .color (m/Color 0xFFF5F5F5) .fontFamily "OyunQaganTig")
+                    :task      (m/TextStyle .fontSize 18.0 .color (m/Color 0xFFF5F5F5) .fontFamily "OyunQaganTig")
 
                     (m/TextStyle .fontSize 18.0
-                                 .color m.Colors/black54
+                                 .color (m/Color 0xFFD0D0D0)
                                  .fontFamily "OyunQaganTig")))})
 
 ;; =============================================================================
@@ -92,12 +106,12 @@
 (defn editor-screen []
   (f/widget
    (m/Scaffold
-    .backgroundColor (m/Color 0xFFF5F5F5)
+    .backgroundColor (m/Color 0xFF121212)
     .appBar (m/AppBar 
              .title (m/Text "Block Editor Example")
              .elevation 0.0
-             .backgroundColor m.Colors/white
-             .foregroundColor m.Colors/black87)
+             .backgroundColor (m/Color 0xFF1E1E1E)
+             .foregroundColor (m/Color 0xFFF5F5F5))
     .body
     (m/SafeArea
      .child
@@ -105,6 +119,7 @@
       !doc-state 
       :editor-config my-editor-config
       :toolbar (toolbar/editor-toolbar !doc-state my-editor-config)
+      :background-color (m/Color 0xFF121212)
       :show-block-handles? true
       :padding (m.EdgeInsets/all 32.0))))))
 
@@ -126,4 +141,5 @@
    (m/MaterialApp
     .title "Block Editor Example"
     .debugShowCheckedModeBanner false
+    .theme (m/ThemeData.dark)
     .home (editor-screen))))

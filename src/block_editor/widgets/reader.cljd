@@ -54,7 +54,7 @@
                  .children
                  [(m/TextSpan
                    .text (str k ": ")
-                   .style (m/TextStyle .color m.Colors/black54
+                   .style (m/TextStyle .color (m/Color 0xFF9E9E9E)
                                        .fontSize 12.0
                                        .fontWeight m.FontWeight/bold
                                        .fontFamily "OyunQaganTig"))
@@ -62,7 +62,7 @@
                    .children
                    (highlighter/build-wiki-text-spans
                     v
-                    (m/TextStyle .color m.Colors/black87
+                    (m/TextStyle .color (m/Color 0xFFD0D0D0)
                                  .fontSize 12.0
                                  .fontFamily "OyunQaganTig")
                     on-link-tap))]))))
