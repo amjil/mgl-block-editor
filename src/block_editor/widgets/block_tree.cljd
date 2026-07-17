@@ -1,6 +1,7 @@
 (ns block-editor.widgets.block-tree
   "Handles recursive rendering of block trees, selection overlays, and menus.
-   Active blocks mount the editable node-view; inactive blocks use read-mode."
+   Text blocks always mount selectable node-view (needed for cross-block drag).
+   Atomic / non-text inactive blocks may use read-mode."
   (:require ["package:flutter/material.dart" :as m]
             ["package:flutter/services.dart" :as s]
             ["package:mongol/mongol.dart" :as mgl]
@@ -191,8 +192,11 @@
         (m/Padding
          .padding (m.EdgeInsets/only .right 24.0)
          .child
+         ;; Text blocks must always mount MglSelectableText + pan handlers so
+         ;; desktop cross-block drag selection (global-selection) can hit-test
+         ;; inactive neighbors. Read-mode is only for inactive non-text/atomic.
          (let [content-widget
-               (if is-active?
+               (if (or is-active? is-text?)
                  (render-edit-content id !state idx cfg block is-active? style)
                  (render-read-content id !state cfg block))]
 

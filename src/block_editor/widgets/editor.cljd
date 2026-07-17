@@ -1,6 +1,6 @@
 (ns block-editor.widgets.editor
   "The standalone, high-level Block Editor orchestrator.
-   Features edge auto-scrolling for marquee selection and enhanced drag physics."
+   Features non-intrusive text selection and Shift+Drag for Marquee block selection."
   (:require ["package:flutter/material.dart" :as m]
             ["package:flutter/foundation.dart" :as foundation]
             ["package:flutter/services.dart" :as s]
@@ -31,29 +31,26 @@
         (= platform foundation.TargetPlatform/iOS))))
 
 ;; -----------------------------------------------------------------------------
-;; Enhanced marquee selection with distance-based edge auto-scroll
+;; Marquee selection and edge auto-scroll logic
 ;; -----------------------------------------------------------------------------
 
 (defonce !marquee-last-intersect-ms (atom 0))
 (def ^:private intersect-throttle-ms 50)
 
 (defn- handle-auto-scroll!
-  "When the pointer nears the left/right screen edges, adjust ScrollController offset by distance."
   [^m/ScrollController scroll-ctrl ^m/BuildContext ctx ^m/Offset global-pos]
   (when (and scroll-ctrl (.hasClients scroll-ctrl))
     (let [dx (.-dx global-pos)
           screen-width (.-width (.-size (m/MediaQuery.of ctx)))
-          edge-threshold 80.0  ;; Start scrolling within 80px of an edge
-          max-scroll-speed 20.0 ;; Closer to the edge = faster scroll, up to 20px/frame
+          edge-threshold 80.0
+          max-scroll-speed 20.0
           position (.-position scroll-ctrl)]
       (cond
-        ;; Near left edge: scroll left
         (< dx edge-threshold)
         (let [speed (* max-scroll-speed (- 1.0 (/ (max 0.0 dx) edge-threshold)))
               target (max 0.0 (- (.-pixels position) speed))]
           (.jumpTo position target))
         
-        ;; Near right edge: scroll right
         (> dx (- screen-width edge-threshold))
         (let [dist (- dx (- screen-width edge-threshold))
               speed (* max-scroll-speed (/ dist edge-threshold))
@@ -61,7 +58,6 @@
           (.jumpTo position target))))))
 
 (defn- handle-selection-intersection!
-  "Hit-test the selection rect against all block bounds and update selection state."
   [!state selection-rect ^m/GlobalKey container-key]
   (when-let [^m/RenderBox container-box (when-let [ctx (.-currentContext container-key)]
                                           (.findRenderObject ctx))]
@@ -99,7 +95,6 @@
                     .borderRadius (m/BorderRadius.circular 2.0)))))))
 
 (defn- editor-stack
-  "Shared Stack layers: editor, marquee, slash, autocomplete, extras, bulk bar."
   [core-child !state cfg selecting? select-rect extras]
   (m/Stack
    .clipBehavior m/Clip.none
@@ -118,7 +113,6 @@
 ;; -----------------------------------------------------------------------------
 
 (defn mongol-block-editor
-  "A highly customizable, horizontal-scrolling block editor for Traditional Mongolian."
   [!state & {:keys [editor-config padding background-color show-block-handles? leading-widget toolbar]
              :or {padding (m/EdgeInsets.all 24.0) background-color m/Colors.transparent show-block-handles? false}}]
   
@@ -132,7 +126,6 @@
     (autocomplete/install-sniffer! !state)
 
     (f/widget
-     ;; Inject ScrollController for canvas auto-scroll
      :managed [editor-focus-node (m/FocusNode)
                marquee-key (m/GlobalKey)
                scroll-ctrl (m/ScrollController)]
@@ -151,28 +144,18 @@
             .onReorder (fn [^int old-idx ^int new-idx]
                          (when-let [reorder-fn (:reorder-block! ops)]
                            (reorder-fn !state old-idx new-idx)))
-            
-            ;; Enhanced drag physics: slight rotation and scale
             .proxyDecorator (fn [^m/Widget child ^int index ^m/Animation animation]
                               (m/AnimatedBuilder 
                                .animation animation 
                                .builder (fn [ctx _] 
                                           (let [anim-val (.-value animation)
-                                                ;; Tilt ~2° while dragging for a lifted feel
                                                 rotation (* anim-val 0.035)
-                                                ;; Scale up ~3%
                                                 scale (+ 1.0 (* anim-val 0.03))]
                                             (m/Transform
                                              .alignment m/Alignment.center
-                                             .transform (-> (m/Matrix4.identity)
-                                                            (.scale scale scale)
-                                                            (.rotateZ rotation))
+                                             .transform (-> (m/Matrix4.identity) (.scale scale scale) (.rotateZ rotation))
                                              .child
-                                             (m/Material 
-                                              .elevation (* 12.0 anim-val) 
-                                              .color m/Colors.transparent 
-                                              .shadowColor m/Colors.black38 
-                                              .child child))))))
+                                             (m/Material .elevation (* 12.0 anim-val) .color m/Colors.transparent .shadowColor m/Colors.black38 .child child))))))
             .itemCount (count root-ids)
             .itemBuilder
             (fn [^m/BuildContext ctx ^int idx]
@@ -185,17 +168,19 @@
            (m/Builder
             .builder
             (fn [^m/BuildContext builder-ctx]
+              ;; Key fix: minimal Listener
+              ;; Only when Shift is held does it capture gestures and enable blue-box marquee selection.
+              ;; Without Shift, it acts as fully transparent glass — native TextField drag-selection works normally.
               (m/Listener
                .behavior m/HitTestBehavior.translucent
                .onPointerDown
                (fn [e]
-                 (if (.-isShiftPressed (.-instance s/HardwareKeyboard))
+                 (when (.-isShiftPressed (.-instance s/HardwareKeyboard))
                    (let [pos (.-localPosition e)]
                      (reset! !selecting? true)
                      (reset! !select-start pos)
                      (reset! !select-rect (m/Rect.fromPoints pos pos))
-                     (swap! !state assoc :selected-block-ids #{}))
-                   (.requestFocus editor-focus-node)))
+                     (swap! !state assoc :selected-block-ids #{}))))
                
                .onPointerMove
                (fn [e]
@@ -205,10 +190,7 @@
                          start @!select-start
                          rect (m/Rect.fromPoints start local-pos)]
                      (reset! !select-rect rect)
-                     
-                     ;; Trigger edge auto-scroll
                      (handle-auto-scroll! scroll-ctrl builder-ctx global-pos)
-                     
                      (let [now (dart:core/DateTime.now)
                            ms (.-millisecondsSinceEpoch now)]
                        (when (>= (- ms @!marquee-last-intersect-ms) intersect-throttle-ms)
@@ -219,10 +201,7 @@
                (fn [_]
                  (reset! !selecting? false)
                  (reset! !select-start nil)
-                 (reset! !select-rect nil)
-                 (m/WidgetsBinding.instance.addPostFrameCallback
-                  (fn [_]
-                    (try (.requestFocus editor-focus-node) (catch Exception _)))))
+                 (reset! !select-rect nil))
                
                .onPointerCancel
                (fn [_]
@@ -233,6 +212,7 @@
                .child
                (m/GestureDetector
                 .behavior m/HitTestBehavior.translucent
+                ;; Tap empty canvas area to focus the last block for smoother editing
                 .onTap (fn []
                          (when-not (:active-block-id @!state)
                            (when-let [last-id (last (:root @!state))]
@@ -275,8 +255,7 @@
             .children
             [(m/Expanded
               .child
-              (editor-stack
-               core-input-area !state cfg selecting? select-rect
+              (editor-stack core-input-area !state cfg selecting? select-rect
                [(if (or (:active-block-id state) (:external-keyboard-delegate state))
                   (keyboard/candidates nil)
                   (m/SizedBox.shrink))]))
@@ -300,7 +279,6 @@
                           (kb-handlers/handle-backspace-action !state cfg)))))}})
                (m/SizedBox.shrink))]))
           
-          ;; Desktop layout
           (overlay/ime-global-wrapper
            (m/Column
             .children
@@ -312,6 +290,5 @@
                 .child core-input-area)
                !state cfg selecting? select-rect
                []))
-             
              (if toolbar toolbar (m/SizedBox.shrink))])
            "main-page-ime-wrapper")))))))
