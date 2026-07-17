@@ -48,7 +48,7 @@
             checked? (block-checked? block)
             cfg* (task-style-cfg cfg checked?)]
       (m/Column
-       .mainAxisSize m.MainAxisSize/min
+       .mainAxisSize m.MainAxisSize/max ;; Fill height so Expanded children work
        .crossAxisAlignment m.CrossAxisAlignment/center
        .children
        [(m/GestureDetector
@@ -61,7 +61,10 @@
           (m/Icon (if checked? m.Icons/check_box m.Icons/check_box_outline_blank)
                   .size 20.0
                   .color (if checked? m.Colors/blue m.Colors/grey))))
-        (node-view/block-node block-id !state index cfg*)])))
+        
+        ;; Wrap text node in Expanded to prevent unbounded vertical growth / overflow
+        (m/Expanded
+         .child (node-view/block-node block-id !state index cfg*))])))
 
    :render-read
    (fn [block base-style on-link-tap _!state]
@@ -82,4 +85,7 @@
           (m/Icon (if checked? m.Icons/check_box m.Icons/check_box_outline_blank)
                   .color (if checked? m.Colors/blue m.Colors/grey)
                   .size 20.0))
-         (reader/wiki-mongol-text-flex clean style on-link-tap)])))})
+         
+         ;; Same Expanded wrap for read-mode text node
+         (m/Expanded
+          .child (reader/wiki-mongol-text-flex clean style on-link-tap))])))})

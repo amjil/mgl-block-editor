@@ -1,0 +1,122 @@
+(ns block-editor.utils.persistence
+  "Handles Serialization (Export) and Deserialization (Import) of the editor state.
+   Ensures only clean, structural data is converted to JSON."
+  (:require ["dart:convert" :as convert]
+            [cljd.flutter :as f]))
+
+;; =============================================================================
+;; Data cleaning & type conversion helpers (Clojure <-> Dart JSON-compatible)
+;; =============================================================================
+
+(defn- to-json-compatible 
+  "Deep walk: convert Clojure Keywords to Strings so dart:convert can encode."
+  [x]
+  (cond
+    (keyword? x) (name x)
+    (map? x) (reduce-kv (fn [acc k v]
+                          (assoc acc (if (keyword? k) (name k) (str k))
+                                     (to-json-compatible v)))
+                        {}
+                        x)
+    (set? x) (mapv to-json-compatible x)
+    (sequential? x) (mapv to-json-compatible x)
+    :else x))
+
+(defn- from-json-compatible 
+  "Deep walk: intercept Dart Maps and Iterables and convert to pure Clojure data."
+  [x]
+  (cond
+    ;; Intercept Dart Map → Clojure map with keyword keys
+    (dart/is? x dart:core/Map)
+    (reduce (fn [acc ^String k]
+              (assoc acc (keyword k) (from-json-compatible (get x k))))
+            {}
+            (.-keys x))
+
+    ;; Intercept Dart List/Iterable → Clojure vector
+    (dart/is? x dart:core/Iterable)
+    (mapv from-json-compatible x)
+
+    :else x))
+
+;; =============================================================================
+;; Core API: Export & Import
+;; =============================================================================
+
+(defn create-empty-state 
+  "Create a fresh editor state with a single empty paragraph."
+  []
+  (let [init-id (str "b-" (random-uuid))]
+    {:root [init-id]
+     :blocks {init-id {:id init-id 
+                       :type :paragraph 
+                       :content "" 
+                       :children []}}
+     ;; Inject required UI initial state
+     :active-block-id nil
+     :selected-block-ids #{}
+     :cursor-visible false
+     :history {:undo-stack [] :redo-stack []}}))
+
+(defn export-to-json 
+  "Purify the !state tree, strip transient UI state, and return a clean JSON string."
+  [state-val]
+  (let [root (:root state-val [])
+        blocks (:blocks state-val {})
+        ;; 1. Clean each block, dropping transient UI fields like :selection
+        clean-blocks
+        (reduce-kv
+         (fn [acc id block]
+           (assoc acc id
+                  (cond-> {:id id
+                           :type (:type block)
+                           :children (:children block [])}
+                    (:content block) (assoc :content (:content block))
+                    (seq (:content-spans block)) (assoc :content-spans (:content-spans block))
+                    (:data block) (assoc :data (:data block)))))
+         {}
+         blocks)
+        
+        ;; 2. Build a clean document tree
+        clean-doc {:root root
+                   :blocks clean-blocks}]
+    
+    ;; 3. Convert to Dart-compatible JSON and encode as string
+    (convert/jsonEncode (to-json-compatible clean-doc))))
+
+(defn import-from-json 
+  "Read a JSON string, deserialize, and rebuild a full editor !state."
+  [json-str]
+  (try
+    (let [raw-dart-map (convert/jsonDecode json-str)
+          clj-data (from-json-compatible raw-dart-map)
+          root (:root clj-data [])
+          blocks (:blocks clj-data {})
+          
+          ;; Restore blocks map: turn keywordized block IDs back into Strings
+          restored-blocks
+          (reduce-kv
+           (fn [acc id-kw block]
+             ;; Block ID must be String "b-xxx"; type must be Keyword :paragraph
+             (let [id-str (if (keyword? id-kw) (name id-kw) (str id-kw))]
+               (assoc acc id-str (update block :type keyword))))
+           {}
+           blocks)]
+      
+      (if (and (seq root) (seq restored-blocks))
+        ;; Success: inject full UI runtime state
+        {:root (vec root)
+         :blocks restored-blocks
+         :active-block-id nil
+         :selected-block-ids #{}
+         :cursor-visible false
+         :history {:undo-stack [] :redo-stack []}}
+        
+        ;; Empty after parse: fall back to blank document
+        (do
+          (dart:core/print "⚠️ Saved structure was empty after parse; falling back to blank document")
+          (create-empty-state))))
+    
+    (catch Exception e
+      (dart:core/print (str "❌ JSON load failed; falling back to blank document: " e))
+      (create-empty-state))))

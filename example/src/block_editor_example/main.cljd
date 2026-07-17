@@ -2,9 +2,13 @@
   "Example app demonstrating the usage of the Block Editor with interactive images."
   (:require ["package:flutter/material.dart" :as m]
             ["package:flutter/foundation.dart" :as foundation :refer [kIsWeb]]
+            ["package:shared_preferences/shared_preferences.dart" :as prefs] ;; Local storage
+            ["dart:async" :as async]
             [cljd.flutter :as f]
+            
             [block-editor.widgets.toolbar :as toolbar]
             [block-editor.widgets.editor :as editor]
+            [block-editor.utils.persistence :as persist] ;; Persistence module
 
             ;; Cross-platform Mongolian IME engine libraries
             [virtual-keyboard.input-control :as input-control]
@@ -18,55 +22,40 @@
         (= platform foundation.TargetPlatform/iOS))))
 
 ;; =============================================================================
-;; 1. State Initialization
+;; 1. State Initialization & Fallback Mock Data
 ;; =============================================================================
 
-(defonce !doc-state
-  (atom {:root ["b-1" "b-2" "b-2b" "b-3" "b-4"]
-         :active-block-id nil
-         :cursor-visible false
-         :external-keyboard-delegate nil
-         :blocks {"b-1" {:id "b-1"
-                         :type :heading-1
-                         :content "Block Editor Test"
-                         :content-spans []
-                         :children ["b-1a" "b-1b"]}
-                  "b-1a" {:id "b-1a"
-                          :type :paragraph
-                          :content "Nested child A — click arrow or Cmd+. to collapse"
-                          :content-spans []
-                          :children ["b-1a1"]}
-                  "b-1a1" {:id "b-1a1"
-                           :type :paragraph
-                           :content "Nested grandchild"
-                           :content-spans []
-                           :children []}
-                  "b-1b" {:id "b-1b"
-                          :type :paragraph
-                          :content "Nested child B"
-                          :content-spans []
-                          :children []}
-                  "b-2" {:id "b-2"
-                         :type :paragraph
-                         :content "See [[Hohhot Trip]] and #travel — type [[ for suggestions"
-                         :content-spans []
-                         :children []}
-                  "b-2b" {:id "b-2b"
-                          :type :task
-                          :content "Pack camera"
-                          :content-spans []
-                          :data {:checked false}
-                          :children []}
-                  "b-3" {:id "b-3"
-                         :type :image
-                         :data {:url "https://picsum.photos/400/200"
-                                :width-ratio 0.5}
-                         :children []}
-                  "b-4" {:id "b-4"
-                         :type :paragraph
-                         :content "status:: done\nnotes:: linked to [[Journal]]"
-                         :content-spans []
-                         :children []}}}))
+;; Default mock / fallback data
+(def ^:private fallback-initial-state
+  {:root ["b-1" "b-2" "b-2b" "b-3" "b-4"]
+   :active-block-id nil
+   :cursor-visible false
+   :history {:undo-stack [] :redo-stack []} ;; Empty history stacks
+   :external-keyboard-delegate nil
+   :blocks {"b-1" {:id "b-1" :type :heading-1 :content "Block Editor Test" :children ["b-1a" "b-1b"]}
+            "b-1a" {:id "b-1a" :type :paragraph :content "Nested child A — click arrow or Cmd+. to collapse" :children ["b-1a1"]}
+            "b-1a1" {:id "b-1a1" :type :paragraph :content "Nested grandchild" :children []}
+            "b-1b" {:id "b-1b" :type :paragraph :content "Nested child B" :children []}
+            "b-2" {:id "b-2" :type :paragraph :content "See [[Hohhot Trip]] and #travel — type [[ for suggestions" :children []}
+            "b-2b" {:id "b-2b" :type :task :content "Pack camera" :data {:checked false} :children []}
+            "b-3" {:id "b-3" :type :image :data {:url "https://picsum.photos/400/200" :width-ratio 0.5} :children []}
+            "b-4" {:id "b-4" :type :paragraph :content "status:: done\nnotes:: linked to [[Journal]]" :children []}}})
+
+(defonce !doc-state (atom fallback-initial-state))
+(def ^:private doc-storage-key "mongol_doc_v1")
+
+;; Async save
+(defn save-document-async! 
+  [state-val]
+  (let [json-str (persist/export-to-json state-val)]
+    (-> (prefs/SharedPreferences.getInstance)
+        (.then (fn [^prefs/SharedPreferences p]
+                 (.setString p doc-storage-key json-str)
+                 (dart:core/print "✅ Document auto-saved locally! (widget-level debounce)"))))))
+
+;; =============================================================================
+;; 2. Editor Configuration
+;; =============================================================================
 
 (def ^:private demo-page-names
   ["Hohhot Trip" "Journal" "Block Editor" "Travel Notes" "Today"])
@@ -75,57 +64,61 @@
   (let [q (clojure.string/lower-case (or query ""))]
     (filter #(clojure.string/includes? (clojure.string/lower-case %) q)
             demo-page-names)))
-;; =============================================================================
-;; 2. Editor Configuration
-;; =============================================================================
 
 (def my-editor-config
   {:text-block-types #{:paragraph :heading-1 :heading-2 :heading-3 :blockquote :list-item :task}
-   ;; Built-in plugins (task / blockquote / image / divider / table) are registered by build-config.
    :on-link-tap (fn [target] (println "link tap:" target))
    :link-suggestions demo-link-suggestions
 
    :block-style (fn [b-type]
                   (case b-type
-                    :heading-1 (m/TextStyle .fontSize 32.0
-                                            .fontWeight m.FontWeight/bold
-                                            .color (m/Color 0xFFF5F5F5)
-                                            .fontFamily "OyunQaganTig")
+                    :heading-1 (m/TextStyle .fontSize 32.0 .fontWeight m.FontWeight/bold .color (m/Color 0xFFF5F5F5) .fontFamily "OyunQaganTig")
                     :heading-2 (m/TextStyle .fontSize 24.0 .fontWeight m.FontWeight/bold .color (m/Color 0xFFF5F5F5) .fontFamily "OyunQaganTig")
                     :heading-3 (m/TextStyle .fontSize 20.0 .fontWeight m.FontWeight/w600 .color (m/Color 0xFFF5F5F5) .fontFamily "OyunQaganTig")
                     :task      (m/TextStyle .fontSize 18.0 .color (m/Color 0xFFF5F5F5) .fontFamily "OyunQaganTig")
-
-                    (m/TextStyle .fontSize 18.0
-                                 .color (m/Color 0xFFD0D0D0)
-                                 .fontFamily "OyunQaganTig")))})
+                    (m/TextStyle .fontSize 18.0 .color (m/Color 0xFFD0D0D0) .fontFamily "OyunQaganTig")))})
 
 ;; =============================================================================
 ;; 3. Main UI & App Entry
 ;; =============================================================================
 
 (defn editor-screen []
-  (f/widget
-   (m/Scaffold
-    .backgroundColor (m/Color 0xFF121212)
-    .appBar (m/AppBar 
-             .title (m/Text "Block Editor Example")
-             .elevation 0.0
-             .backgroundColor (m/Color 0xFF1E1E1E)
-             .foregroundColor (m/Color 0xFFF5F5F5))
-    .body
-    (m/SafeArea
-     .child
-     (editor/mongol-block-editor 
-      !doc-state 
-      :editor-config my-editor-config
-      :toolbar (toolbar/editor-toolbar !doc-state my-editor-config)
-      :background-color (m/Color 0xFF121212)
-      :show-block-handles? true
-      :padding (m.EdgeInsets/all 32.0))))))
+  ;; Keep atom in a plain let outside f/widget
+  (let [!save-timer (atom nil)]
+    (f/widget
+     ;; Watch global state changes
+     :watch [current-state !doc-state]
+     
+     ;; Update !save-timer during UI rebuild
+     (let [_ (when @!save-timer (.cancel ^async/Timer @!save-timer)
+                   nil)
+           _ (reset! !save-timer 
+                     (async/Timer. 
+                      (dart:core/Duration .seconds 2) 
+                      #(save-document-async! current-state)))]
+       
+       (m/Scaffold
+        .backgroundColor (m/Color 0xFF121212)
+        .appBar (m/AppBar 
+                 .title (m/Text "Block Editor Example")
+                 .elevation 0.0
+                 .backgroundColor (m/Color 0xFF1E1E1E)
+                 .foregroundColor (m/Color 0xFFF5F5F5))
+        .body
+        (m/SafeArea
+         .child
+         (editor/mongol-block-editor 
+          !doc-state 
+          :editor-config my-editor-config
+          :toolbar (toolbar/editor-toolbar !doc-state my-editor-config)
+          :background-color (m/Color 0xFF121212)
+          :show-block-handles? true
+          :padding (m.EdgeInsets/all 32.0))))))))
 
 (defn main []
   (m.WidgetsFlutterBinding/ensureInitialized)
 
+  ;; 1. Initialize IME config
   (remote/set-config! {:base-url "localhost:3003"
                        :candidate-api-path "/api/next_word/candidates"
                        :next-word-api-path "/api/next_word/list"})
@@ -137,6 +130,16 @@
   (when (is-mobile?)
     (input-control/set-control))
 
+  ;; 2. Load persisted data before launch
+  (let [prefs (await (prefs/SharedPreferences.getInstance))
+        saved-json (.getString prefs doc-storage-key)]
+    (if saved-json
+      (do 
+        (dart:core/print "📥 Found local save, restoring...")
+        (reset! !doc-state (persist/import-from-json saved-json)))
+      (dart:core/print "📝 No local save; loading initial test data.")))
+
+  ;; 3. Mount UI
   (f/run
    (m/MaterialApp
     .title "Block Editor Example"

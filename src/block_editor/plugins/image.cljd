@@ -1,11 +1,16 @@
 (ns block-editor.plugins.image
-  "Image block plugin — interactive edit, static read, width-ratio resize."
+  "Image block plugin — interactive edit, static read, width-ratio resize.
+   Includes robust URL validation and error rendering to prevent crashes."
   (:require ["package:flutter/material.dart" :as m]
             [cljd.flutter :as f]
             [rich-editor.commands.editor-commands :as editor-cmd]
             [rich-editor.commands.transaction :as tx]))
 
 (def ^:private default-width-ratio 0.5)
+
+;; =============================================================================
+;; 1. Fullscreen Image Viewer
+;; =============================================================================
 
 (defn- image-fullscreen-route
   [url hero-tag]
@@ -35,7 +40,16 @@
             .child
             (m/Hero
              .tag hero-tag
-             .child (m/Image.network url .fit m.BoxFit/contain)))))
+             .child 
+             (m/Image.network url 
+               .fit m.BoxFit/contain
+               ;; Fallback: friendly message on network error in fullscreen
+               .errorBuilder (fn [_ _ _] 
+                               (m/Column 
+                                .mainAxisSize m.MainAxisSize/min
+                                .children [(m/Icon m.Icons/broken_image .color m.Colors/white .size 64.0)
+                                           (m/SizedBox .height 16.0)
+                                           (m/Text "Image failed to load" .style (m/TextStyle .color m.Colors/white))])))))))
          (m/Positioned
           .top 48.0
           .right 24.0
@@ -43,6 +57,10 @@
           (m/IconButton
            .icon (m/Icon m.Icons/close .color m.Colors/white .size 32.0)
            .onPressed (fn [] (.pop (m/Navigator.of ctx)) nil)))]))))))
+
+;; =============================================================================
+;; 2. Width Ratio Slider logic
+;; =============================================================================
 
 (defn- set-width-ratio!
   [!state block-id new-val]
@@ -65,12 +83,17 @@
     .onChanged (fn [new-val]
                  (set-width-ratio! !state block-id new-val)))))
 
+;; =============================================================================
+;; 3. Edit Mode Renderer
+;; =============================================================================
+
 (defn- render-image-edit
   [id !state _index cfg]
   (f/widget
    :watch [state-val !state]
    (let [block* (get-in state-val [:blocks id])
          url* (get-in block* [:data :url] "")
+         content* (:content block* "") ;; Extract text content if present
          width-ratio (get-in block* [:data :width-ratio] default-width-ratio)
          is-active? (= id (:active-block-id state-val))
          sel (get-in state-val [:blocks id :selection])
@@ -93,6 +116,7 @@
              (fn [^m/BuildContext img-ctx]
                (m/GestureDetector
                 .behavior m.HitTestBehavior/opaque
+                ;; Cursor placement on tap (top half = offset 0, bottom = 1)
                 .onTapUp
                 (fn [^m/TapUpDetails details]
                   (try
@@ -103,6 +127,7 @@
                       (editor-cmd/focus-block !state id new-offset))
                     (catch Exception _ nil))
                   nil)
+                ;; Double-tap to open fullscreen
                 .onDoubleTap
                 (fn []
                   (when (seq url*)
@@ -129,10 +154,22 @@
                   .children
                   [(m/ClipRRect
                     .borderRadius (m.BorderRadius/circular 4.0)
-                    .child
-                    (m/Hero
-                     .tag hero-tag
-                     .child (m/Image.network url* .fit m.BoxFit/cover)))
+                    .child 
+                    ;; Guard: empty URL must not crash Image.network
+                    (if (seq url*)
+                      (m/Hero
+                       .tag hero-tag
+                       .child (m/Image.network url* 
+                                .fit m.BoxFit/cover
+                                ;; Error placeholder
+                                .errorBuilder (fn [_ _ _] 
+                                                (m/Container .height 100.0 .color m.Colors/grey
+                                                 .child (m/Center .child (m/Icon m.Icons/broken_image .color m.Colors/white))))))
+                      ;; Default placeholder when URL is empty
+                      (m/Container .height 100.0 .color m.Colors/grey
+                       .child (m/Center .child (m/Icon m.Icons/image .color m.Colors/white)))))
+                   
+                   ;; Multi-select overlay
                    (if is-block-selected?
                      (m/Positioned.fill
                       .child (m/Container
@@ -140,6 +177,8 @@
                                            .color (-> m.Colors/blue (.withOpacity 0.3))
                                            .borderRadius (m.BorderRadius/circular 4.0))))
                      (m/SizedBox.shrink))
+                   
+                   ;; Cursor indicator line
                    (if cursor-visible?
                      (m/Positioned
                       .left 0.0 .right 0.0
@@ -147,7 +186,19 @@
                       .bottom (if (== offset 1) -2.0 nil)
                       .child (m/Container .height 2.0 .color m.Colors/blue))
                      (m/SizedBox.shrink))])))))
+            
+            ;; Show leftover text content when active
+            (if (and is-active? (seq content*))
+              (m/Padding 
+               .padding (m.EdgeInsets/only .bottom 4.0)
+               .child (m/Text content* .style (m/TextStyle .color m.Colors/grey .fontStyle m.FontStyle/italic)))
+              (m/SizedBox.shrink))
+            
             (width-ratio-slider !state id display-width width-ratio)])))))))
+
+;; =============================================================================
+;; 4. Read Mode Renderer
+;; =============================================================================
 
 (defn- render-image-read
   [block _base-style _on-link-tap !state]
@@ -155,7 +206,7 @@
         block-id (:id block)
         width-ratio (get-in block [:data :width-ratio] default-width-ratio)]
     (if (empty? url)
-      (m/SizedBox.shrink)
+      (m/SizedBox.shrink) ;; Collapse when read mode has no image URL
       (m/Builder
        .builder
        (fn [^m/BuildContext ctx]
@@ -167,9 +218,19 @@
             .children
             [(m/ClipRRect
               .borderRadius (m.BorderRadius/circular 8.0)
-              .child (m/Image.network url .width display-width .fit m.BoxFit/fitWidth))
+              .child (m/Image.network url 
+                       .width display-width 
+                       .fit m.BoxFit/fitWidth
+                       ;; Error placeholder
+                       .errorBuilder (fn [_ _ _] 
+                                       (m/Container .width display-width .height 100.0 .color m.Colors/grey
+                                        .child (m/Center .child (m/Icon m.Icons/broken_image .color m.Colors/white))))))
              (m/SizedBox .height 8.0)
              (width-ratio-slider !state block-id display-width width-ratio)])))))))
+
+;; =============================================================================
+;; 5. Plugin Registration
+;; =============================================================================
 
 (defn image-plugin
   "Image block (atomic) with :width-ratio resize (default 0.5)."

@@ -3,6 +3,9 @@
    Designed to sit at the bottom of the screen or above the virtual keyboard."
   (:require ["package:flutter/material.dart" :as m]
             [cljd.flutter :as f]
+            [clojure.string :as str]
+
+            [rich-editor.commands.transaction :as tx]
             [block-editor.commands.ops :as ops])) ;; 🌟 Directly import ops
 
 (defn- toolbar-button 
@@ -73,9 +76,27 @@
 
            (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
 
-           ;; 4. Media, dividers, and tables (includes Table)
+           ;; 4. Media, dividers, and tables
            (toolbar-button m.Icons/image "Image" (= block-type :image)
-                           #(ops/convert-block! !state active-id :image))
+                           (fn []
+                             (let [current-content (get-in state-val [:blocks active-id :content] "")
+                                   ;; Treat content starting with http as a URL
+                                   is-url? (str/starts-with? current-content "http")]
+
+                               ;; 1. Convert block type
+                               (ops/convert-block! !state active-id :image)
+
+                               ;; 2. Smart fill: move URL into data and clear content
+                               (tx/commit-transaction!
+                                !state
+                                (tx/make-transaction
+                                 :ops [(tx/update-data-op active-id
+                                                          {:url (if is-url? current-content "https://picsum.photos/400/200")
+                                                           :width-ratio 0.5})
+                                       ;; Clear text when content was used as image URL
+                                       (tx/update-data-op active-id {:content (if is-url? "" current-content)})]
+                                 :after-selection nil)))))
+
            (toolbar-button m.Icons/horizontal_rule "Divider" (= block-type :divider)
                            #(ops/convert-block! !state active-id :divider))
            (toolbar-button m.Icons/table_chart "Table" (= block-type :table)

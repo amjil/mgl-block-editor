@@ -45,6 +45,7 @@ dependencies:
   html: ^0.15.6
   mgl_editor_core:
     path: ../../mgl-richtext-editor/packages/mgl_editor_core
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:
