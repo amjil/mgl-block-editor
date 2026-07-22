@@ -168,19 +168,18 @@
            (m/Builder
             .builder
             (fn [^m/BuildContext builder-ctx]
-              ;; Key fix: minimal Listener
-              ;; Only when Shift is held does it capture gestures and enable blue-box marquee selection.
-              ;; Without Shift, it acts as fully transparent glass — native TextField drag-selection works normally.
+              ;; Shift+drag: marquee. Otherwise requestFocus so shared-ime gets key events.
               (m/Listener
                .behavior m/HitTestBehavior.translucent
                .onPointerDown
                (fn [e]
-                 (when (.-isShiftPressed (.-instance s/HardwareKeyboard))
+                 (if (.-isShiftPressed (.-instance s/HardwareKeyboard))
                    (let [pos (.-localPosition e)]
                      (reset! !selecting? true)
                      (reset! !select-start pos)
                      (reset! !select-rect (m/Rect.fromPoints pos pos))
-                     (swap! !state assoc :selected-block-ids #{}))))
+                     (swap! !state assoc :selected-block-ids #{}))
+                   (.requestFocus editor-focus-node)))
                
                .onPointerMove
                (fn [e]
@@ -201,7 +200,12 @@
                (fn [_]
                  (reset! !selecting? false)
                  (reset! !select-start nil)
-                 (reset! !select-rect nil))
+                 (reset! !select-rect nil)
+                 (m/WidgetsBinding.instance.addPostFrameCallback
+                  (fn [_]
+                    (try
+                      (.requestFocus editor-focus-node)
+                      (catch Exception _)))))
                
                .onPointerCancel
                (fn [_]
