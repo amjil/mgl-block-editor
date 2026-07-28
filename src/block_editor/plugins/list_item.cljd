@@ -1,40 +1,47 @@
 (ns block-editor.plugins.list-item
-  "Bullet list item plugin — exactly mirrors blockquote/task architecture via :text-block-wrapper.
-   Uses Stack + Padding to guarantee zero RenderFlex overflow errors."
+  "Bullet list item plugin — uses Stack Alignment/topLeft + exact column width
+   to guarantee the bullet dot stays perfectly centered above the first text column."
   (:require ["package:flutter/material.dart" :as m]
             [block-editor.widgets.reader :as reader]
-            [block-editor.utils.inline :as inline]))
+            [block-editor.utils.inline :as inline]
+            [block-editor.utils.text :as text])) ;; column width measurement utility
 
 (defn wrap-list-item
-  "Wraps the editable text widget with a bullet dot above it.
+  "Wraps the editable text widget with a bullet dot above the FIRST vertical column.
    Identical to wrap-blockquote: zero Column, zero rigid Expanded, zero overflow."
-  [text-widget _id _!state _root-index _block _style _cfg]
-  (m/Stack
-   .alignment m.Alignment/topCenter
-   .clipBehavior m.Clip/none
-   .children
-   [;; 1. Reserve 20px top padding for the bullet; mount text-widget unchanged
-    (m/Container
-     .padding (m.EdgeInsets/only .top 20.0)
-     .child text-widget)
-    
-    ;; 2. Stack the bullet dot centered in the top padding
-    ;; (6px margin-top + 6px dot-height + 8px margin-bottom = exactly 20px)
-    (m/Padding
-     .padding (m.EdgeInsets/only .top 6.0)
-     .child
-     (m/Container
-      .width 6.0
-      .height 6.0
-      .decoration (m/BoxDecoration
-                   .color m.Colors/grey
-                   .shape m.BoxShape/circle)))]))
+  [text-widget _id _!state _root-index _block style _cfg]
+  (let [;; 1. Measure the real physical width of a vertical column for the current font size and style
+        col-width (if style (text/get-exact-column-width style) 18.0)
+        ;; 2. Centering formula: (column width - dot width 6.0) / 2.0
+        dot-left-pad (max 0.0 (/ (- col-width 6.0) 2.0))]
+    (m/Stack
+     .alignment m.Alignment/topLeft ;; topLeft required so the dot does not drift right when text wraps across columns
+     .clipBehavior m.Clip/none
+     .children
+     [;; 1. Reserve 20px top padding for the bullet; mount text-widget unchanged
+      (m/Container
+       .padding (m.EdgeInsets/only .top 20.0)
+       .child text-widget)
+      
+      ;; 2. Hang the bullet dot at the horizontal center of the first column
+      (m/Padding
+       .padding (m.EdgeInsets/only .top 6.0 .left dot-left-pad)
+       .child
+       (m/Container
+        .width 6.0
+        .height 6.0
+        .decoration (m/BoxDecoration
+                     .color m.Colors/grey
+                     .shape m.BoxShape/circle)))])))
 
 (defn- render-list-read
   [block base-style on-link-tap _!state]
-  (let [clean (inline/strip-properties (or (:content block) ""))]
+  (let [clean (inline/strip-properties (or (:content block) ""))
+        ;; Read-only mode: same column width measurement and horizontal centering
+        col-width (if base-style (text/get-exact-column-width base-style) 18.0)
+        dot-left-pad (max 0.0 (/ (- col-width 6.0) 2.0))]
     (m/Stack
-     .alignment m.Alignment/topCenter
+     .alignment m.Alignment/topLeft ;; Read-only mode: same topLeft lock
      .clipBehavior m.Clip/none
      .children
      [(m/Container
@@ -42,7 +49,7 @@
        .child (reader/wiki-mongol-text-flex clean base-style on-link-tap))
       
       (m/Padding
-       .padding (m.EdgeInsets/only .top 6.0)
+       .padding (m.EdgeInsets/only .top 6.0 .left dot-left-pad)
        .child
        (m/Container
         .width 6.0
