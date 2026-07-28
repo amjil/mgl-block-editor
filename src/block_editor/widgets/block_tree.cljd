@@ -66,14 +66,15 @@
       (with-slash-anchor is-active? (edit-render id !state idx cfg))
 
       is-text?
-      (let [text-stack
+      (let [list-pad (if (= block-type :list-item) 20.0 0.0)
+            text-stack
             (m/Stack
              .alignment m.Alignment/topLeft
              .clipBehavior m.Clip/none
              .children
              [(if (and is-empty? is-active? (not-empty placeholder))
                 (m/Padding
-                 .padding (m.EdgeInsets/only .top (+ 4.0 indent-padding) .left 4.0 .right 4.0 .bottom 4.0)
+                 .padding (m.EdgeInsets/only .top (+ 4.0 indent-padding list-pad) .left 4.0 .right 4.0 .bottom 4.0)
                  .child (m/IgnorePointer
                          .child (mgl/MongolText placeholder
                                                 .style (if style
