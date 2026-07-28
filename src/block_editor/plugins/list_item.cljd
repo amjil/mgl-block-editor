@@ -1,0 +1,60 @@
+(ns block-editor.plugins.list-item
+  "Bullet list item plugin — exactly mirrors blockquote/task architecture via :text-block-wrapper.
+   Uses Stack + Padding to guarantee zero RenderFlex overflow errors."
+  (:require ["package:flutter/material.dart" :as m]
+            [block-editor.widgets.reader :as reader]
+            [block-editor.utils.inline :as inline]))
+
+(defn wrap-list-item
+  "Wraps the editable text widget with a bullet dot above it.
+   Identical to wrap-blockquote: zero Column, zero rigid Expanded, zero overflow."
+  [text-widget _id _!state _root-index _block _style _cfg]
+  (m/Stack
+   .alignment m.Alignment/topCenter
+   .clipBehavior m.Clip/none
+   .children
+   [;; 1. Reserve 20px top padding for the bullet; mount text-widget unchanged
+    (m/Container
+     .padding (m.EdgeInsets/only .top 20.0)
+     .child text-widget)
+    
+    ;; 2. Stack the bullet dot centered in the top padding
+    ;; (6px margin-top + 6px dot-height + 8px margin-bottom = exactly 20px)
+    (m/Padding
+     .padding (m.EdgeInsets/only .top 6.0)
+     .child
+     (m/Container
+      .width 6.0
+      .height 6.0
+      .decoration (m/BoxDecoration
+                   .color m.Colors/grey
+                   .shape m.BoxShape/circle)))]))
+
+(defn- render-list-read
+  [block base-style on-link-tap _!state]
+  (let [clean (inline/strip-properties (or (:content block) ""))]
+    (m/Stack
+     .alignment m.Alignment/topCenter
+     .clipBehavior m.Clip/none
+     .children
+     [(m/Container
+       .padding (m.EdgeInsets/only .top 20.0)
+       .child (reader/wiki-mongol-text-flex clean base-style on-link-tap))
+      
+      (m/Padding
+       .padding (m.EdgeInsets/only .top 6.0)
+       .child
+       (m/Container
+        .width 6.0
+        .height 6.0
+        .decoration (m/BoxDecoration
+                     .color m.Colors/grey
+                     .shape m.BoxShape/circle)))])))
+
+(defn list-item-plugin
+  "Bullet list item block. Edit uses :text-block-wrapper around block-node."
+  []
+  {:type :list-item
+   :text-block-type? true
+   :text-block-wrapper wrap-list-item
+   :render-read render-list-read})

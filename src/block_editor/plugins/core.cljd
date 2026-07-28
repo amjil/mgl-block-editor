@@ -11,12 +11,14 @@
   (:require [block-editor.plugins.task :as task]
             [block-editor.plugins.blockquote :as blockquote]
             [block-editor.plugins.image :as image]
-            [block-editor.plugins.divider :as divider]))
+            [block-editor.plugins.divider :as divider]
+            [block-editor.plugins.list-item :as list-item]))
 
 (def task-plugin task/task-plugin)
 (def blockquote-plugin blockquote/blockquote-plugin)
 (def image-plugin image/image-plugin)
 (def divider-plugin divider/divider-plugin)
+(def list-item-plugin list-item/list-item-plugin)
 
 (defn default-plugins
   "Built-in plugins merged by `build-config` (user plugins override by :type)."
@@ -24,4 +26,5 @@
   [(task/task-plugin)
    (blockquote/blockquote-plugin)
    (image/image-plugin)
-   (divider/divider-plugin)])
+   (divider/divider-plugin)
+   (list-item/list-item-plugin)])
