@@ -126,7 +126,7 @@
          drag-icon (m/Icon m.Icons/drag_indicator
                            .size 16.0
                            .color (if is-block-selected? m.Colors/blue m.Colors/grey))
-         collapse-icon (m/Icon (if is-collapsed? m.Icons/arrow_right m.Icons/arrow_drop_down)
+         collapse-icon (m/Icon (if is-collapsed? m.Icons/arrow_right m.Icons/arrow_drop_up)
                                .size 16.0 .color m.Colors/blue)
          handle-tap
          (fn [show-menu]
