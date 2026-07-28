@@ -3,18 +3,24 @@
   (:require ["package:flutter/material.dart" :as m]))
 
 (defn get-exact-column-width 
-  "Uses TextPainter to calculate the exact pixel width of a single text column
-   based on the provided TextStyle. Essential for precise vertical alignments."
+  "Calculates a realistic vertical column width for Mongolian text.
+   In LTR measurement, the font's line height (.height) equals the vertical column width."
   [^m/TextStyle style]
-  (let [;; We use a standard wide Mongolian character to measure the column bounds
-        test-char "ᠮ" 
-        painter (m/TextPainter
-                 .text (m/TextSpan .text test-char .style style)
-                 ;; TextDirection is required by TextPainter to perform layout
-                 .textDirection m.TextDirection/ltr)]
-    
-    ;; Trigger the synchronous off-screen layout calculation
-    (.layout painter)
-    
-    ;; Return the horizontal width of the bounding box
-    (.-width painter)))
+  (if-not style
+    18.0
+    (let [font-size (or (.-fontSize style) 16.0)
+          height-multiplier (or (.-height style) 1.4)
+          ;; 1. Estimate column width from font size × line-height multiplier
+          estimated-height-width (* font-size height-multiplier)
+          
+          ;; 2. Use TextPainter to measure the glyph's physical bounds
+          ;; Note: under LTR (horizontal) measurement, .-height becomes the true column width in vertical layout
+          test-char "ᠮ" 
+          painter (m/TextPainter
+                   .text (m/TextSpan .text test-char .style style)
+                   .textDirection m.TextDirection/ltr)
+          _ (.layout painter)
+          glyph-col-width (.-height painter)] ;; Core fix: read .-height
+      
+      ;; 3. Take the max of estimated width and measured line height, plus 2.0px layout padding
+      (+ (max estimated-height-width glyph-col-width) 2.0))))

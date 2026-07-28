@@ -112,7 +112,7 @@
          is-text? (rich-config/text-block-type? cfg block-type)
          style (if is-text? (rich-config/get-block-style cfg block-type) nil)
          exact-col-width (if style (text/get-exact-column-width style) 18.0)
-         handle-left-pad (max 0.0 (- (+ 4.0 (/ exact-col-width 2.0)) 8.0))
+         handle-left-pad (max 0.0 (+ (- (+ 4.0 (/ exact-col-width 2.0)) 8.0) 2.0))
          ops (:block-ops cfg)
 
          selected-ids (:selected-block-ids state-val #{})
