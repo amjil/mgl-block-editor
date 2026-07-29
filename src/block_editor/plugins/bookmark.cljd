@@ -1,0 +1,155 @@
+(ns block-editor.plugins.bookmark
+  "Bookmark block plugin — native Mongolian vertical layout.
+   All static property accesses standardized to ClojureDart m/Class.member syntax."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:mongol/mongol.dart" :as mgl]
+            [cljd.flutter :as f]
+            [rich-editor.commands.editor-commands :as editor-cmd]
+            [rich-editor.commands.transaction :as tx]))
+
+(defn- bookmark-card-widget
+  "Renders the bookmark card in traditional Mongolian vertical typography."
+  [url title desc is-active? on-tap]
+  (let [has-url? (seq url)
+        domain (if has-url?
+                 (try (.-host (dart:core/Uri.parse url))
+                      (catch Exception _ url))
+                 "Invalid URL")
+        initial-char (if (seq domain) (clojure.string/upper-case (subs domain 0 1)) "#")]
+    (m/GestureDetector
+     .behavior m/HitTestBehavior.opaque
+     .onTap on-tap
+     .child
+     (m/Container
+      .margin (m/EdgeInsets.only .right 8.0)
+      .decoration (m/BoxDecoration
+                   .color m/Colors.white
+                   .border (m/Border.all
+                            .color (if is-active? m/Colors.blue m/Colors.grey.shade300)
+                            .width (if is-active? 1.5 1.0))
+                   .borderRadius (m/BorderRadius.circular 8.0)
+                   .boxShadow [(m/BoxShadow
+                                .color (-> m/Colors.black (.withOpacity 0.05))
+                                .blurRadius 4.0
+                                .offset (m/Offset 2.0 0.0))])
+      .child
+      (m/Padding
+       .padding (m/EdgeInsets.all 12.0)
+       .child
+       (m/Column
+        .crossAxisAlignment m/CrossAxisAlignment.center
+        .children
+        [;; Top: domain initial avatar
+         (m/Container
+          .width 36.0
+          .height 36.0
+          .decoration (m/BoxDecoration
+                       .color m/Colors.blue.shade50
+                       .shape m/BoxShape.circle)
+          .child
+          (m/Center
+           .child
+           (mgl/MongolText initial-char
+                           .style (m/TextStyle .color m/Colors.blue
+                                               .fontWeight m/FontWeight.bold
+                                               .fontSize 16.0))))
+         
+         (m/SizedBox .height 12.0)
+         
+         ;; Below: Mongolian columns left to right
+         (m/Expanded
+          .child
+          (m/Row
+           .crossAxisAlignment m/CrossAxisAlignment.start
+           .mainAxisSize m/MainAxisSize.min
+           .children
+           [;; Column 1: page title
+            (mgl/MongolText (or (not-empty title) domain)
+                            .maxLines 1
+                            .overflow m/TextOverflow.ellipsis
+                            .style (m/TextStyle .fontWeight m/FontWeight.w600
+                                                .fontSize 14.0
+                                                .color m/Colors.black87))
+            
+            ;; Column 2: page description
+            (if (seq desc)
+              (m/Padding
+               .padding (m/EdgeInsets.only .left 8.0)
+               .child
+               (mgl/MongolText desc
+                               .maxLines 2
+                               .overflow m/TextOverflow.ellipsis
+                               .style (m/TextStyle .fontSize 12.0
+                                                   .color m/Colors.grey.shade600)))
+              (m/SizedBox.shrink))
+            
+            ;; Column 3: URL
+            (m/Padding
+             .padding (m/EdgeInsets.only .left 8.0)
+             .child
+             (mgl/MongolText url
+                             .maxLines 1
+                             .overflow m/TextOverflow.ellipsis
+                             .style (m/TextStyle .fontSize 11.0
+                                                 .color m/Colors.blue.shade700)))]))]))))))
+
+(defn- render-bookmark-edit
+  [id !state _index _cfg]
+  (f/widget
+   :watch [state-val !state]
+   (let [block (get-in state-val [:blocks id])
+         url (get-in block [:data :url] "")
+         title (get-in block [:data :title] "")
+         desc (get-in block [:data :desc] "")
+         is-active? (= id (:active-block-id state-val))]
+     (if (empty? url)
+       ;; Empty card when no URL is bound
+       (m/GestureDetector
+        .behavior m/HitTestBehavior.opaque
+        .onTap #(editor-cmd/focus-block !state id 0)
+        .child
+        (m/Container
+         .margin (m/EdgeInsets.only .right 8.0)
+         .padding (m/EdgeInsets.all 12.0)
+         .decoration (m/BoxDecoration
+                      .color m/Colors.grey.shade100
+                      .border (m/Border.all .color (if is-active? m/Colors.blue m/Colors.grey.shade300)
+                                            .width (if is-active? 1.5 1.0))
+                      .borderRadius (m/BorderRadius.circular 8.0))
+         .child
+         (m/Column
+          .mainAxisAlignment m/MainAxisAlignment.start
+          .crossAxisAlignment m/CrossAxisAlignment.center
+          .children
+          [(m/Icon m/Icons.bookmark_border .color m/Colors.grey.shade700)
+           (m/SizedBox .height 8.0)
+           (m/Expanded
+            .child
+            (mgl/MongolText "Empty Bookmark — select and set URL"
+                            .maxLines 1
+                            .overflow m/TextOverflow.ellipsis
+                            .style (m/TextStyle .color m/Colors.grey.shade700 .fontSize 13.0)))])))
+       
+       ;; Standard reading card when URL is bound
+       (bookmark-card-widget
+        url title desc is-active?
+        #(editor-cmd/focus-block !state id 0))))))
+
+(defn- render-bookmark-read
+  [block _base-style _on-link-tap _!state]
+  (let [url (get-in block [:data :url] "")
+        title (get-in block [:data :title] "")
+        desc (get-in block [:data :desc] "")]
+    (if (empty? url)
+      (m/SizedBox.shrink)
+      (bookmark-card-widget
+       url title desc false
+       nil))))
+
+(defn bookmark-plugin
+  "Bookmark URL card block (atomic)."
+  []
+  {:type :bookmark
+   :text-block-type? false
+   :render render-bookmark-edit
+   :render-read render-bookmark-read})

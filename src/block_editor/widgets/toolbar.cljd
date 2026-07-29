@@ -70,7 +70,7 @@
            (toolbar-button m.Icons/format_list_bulleted "List" (= block-type :list-item)
                            #(ops/convert-block! !state active-id :list-item))
            (toolbar-button m.Icons/format_list_numbered "Numbered List" (= block-type :ordered-list-item)
-                #(ops/convert-block! !state active-id :ordered-list-item))
+                           #(ops/convert-block! !state active-id :ordered-list-item))
            (toolbar-button m.Icons/check_box "Task" (= block-type :task)
                            #(ops/convert-block! !state active-id :task))
            (toolbar-button m.Icons/format_quote "Quote" (= block-type :blockquote)
@@ -101,8 +101,30 @@
 
            (toolbar-button m.Icons/horizontal_rule "Divider" (= block-type :divider)
                            #(ops/convert-block! !state active-id :divider))
-           (toolbar-button m.Icons/table_chart "Table" (= block-type :table)
-                           #(ops/convert-block! !state active-id :table))
+           ;
+           ; (toolbar-button m.Icons/table_chart "Table" (= block-type :table)
+           ;                #(ops/convert-block! !state active-id :table)
+           (toolbar-button m.Icons/bookmark_border "Bookmark" (= block-type :bookmark)
+                           (fn []
+                             (let [current-content (get-in state-val [:blocks active-id :content] "")
+                                   is-url? (clojure.string/starts-with? current-content "http")]
+
+                               ;; 1. Convert block type
+                               (ops/convert-block! !state active-id :bookmark)
+
+                               ;; 2. If content is a valid URL, move it into data and clear the string
+                               (tx/commit-transaction!
+                                !state
+                                (tx/make-transaction
+                                 :ops [(tx/update-data-op active-id
+                                                          {:url (if is-url? current-content "")
+                                                           :title (if is-url? current-content "Web Bookmark")
+                                                           :desc "External web page reference"})
+                                       (tx/update-data-op active-id {:content (if is-url? "" current-content)})]
+                                 :after-selection nil)))))
+
+           (toolbar-button m.Icons/lightbulb_outline "Callout" (= block-type :callout)
+                           #(ops/convert-block! !state active-id :callout))
 
            (m/SizedBox .width 16.0)]))
 

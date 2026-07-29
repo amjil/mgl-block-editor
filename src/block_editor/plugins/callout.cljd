@@ -1,0 +1,75 @@
+(ns block-editor.plugins.callout
+  "Callout block plugin — highlighted card container with icon prefix.
+   All static property accesses standardized to ClojureDart m/Class.member syntax."
+  (:require ["package:flutter/material.dart" :as m]
+            [block-editor.widgets.reader :as reader]
+            [block-editor.utils.inline :as inline]
+            [block-editor.utils.text :as text]
+            [rich-editor.commands.transaction :as tx]))
+
+(def ^:private default-icon "💡")
+(def ^:private default-bg-color (m/Color 0xFFFFF8E1))
+(def ^:private default-border-color (m/Color 0xFFFFD54F))
+
+(defn wrap-callout
+  "Wraps the editable text widget inside a decorated container with an emoji/icon
+   centered above the FIRST vertical text column."
+  [text-widget id !state _root-index block style _cfg]
+  (let [icon-str (get-in block [:data :icon] default-icon)
+        col-width (if style (text/get-exact-column-width style) 18.0)
+        icon-left-pad (max 0.0 (/ (- col-width 20.0) 2.0))]
+    (m/Container
+     .margin (m/EdgeInsets.only .bottom 8.0)
+     .decoration (m/BoxDecoration
+                  .color default-bg-color
+                  .border (m/Border.all .color default-border-color .width 1.0)
+                  .borderRadius (m/BorderRadius.circular 8.0))
+     .padding (m/EdgeInsets.all 12.0)
+     .child
+     (m/Stack
+      .alignment m/Alignment.topLeft
+      .clipBehavior m/Clip.none
+      .children
+      [(m/Container
+        .padding (m/EdgeInsets.only .top 28.0)
+        .child text-widget)
+       
+       (m/Padding
+        .padding (m/EdgeInsets.only .left icon-left-pad)
+        .child
+        (m/Text icon-str .style (m/TextStyle .fontSize 20.0)))]))))
+
+(defn- render-callout-read
+  [block base-style on-link-tap _!state]
+  (let [clean (inline/strip-properties (or (:content block) ""))
+        icon-str (get-in block [:data :icon] default-icon)
+        col-width (if base-style (text/get-exact-column-width base-style) 18.0)
+        icon-left-pad (max 0.0 (/ (- col-width 20.0) 2.0))]
+    (m/Container
+     .margin (m/EdgeInsets.only .bottom 8.0)
+     .decoration (m/BoxDecoration
+                  .color default-bg-color
+                  .border (m/Border.all .color default-border-color .width 1.0)
+                  .borderRadius (m/BorderRadius.circular 8.0))
+     .padding (m/EdgeInsets.all 12.0)
+     .child
+     (m/Stack
+      .alignment m/Alignment.topLeft
+      .clipBehavior m/Clip.none
+      .children
+      [(m/Container
+        .padding (m/EdgeInsets.only .top 28.0)
+        .child (reader/wiki-mongol-text-flex clean base-style on-link-tap))
+       
+       (m/Padding
+        .padding (m/EdgeInsets.only .left icon-left-pad)
+        .child
+        (m/Text icon-str .style (m/TextStyle .fontSize 20.0)))]))))
+
+(defn callout-plugin
+  "Callout highlighted text block."
+  []
+  {:type :callout
+   :text-block-type? true
+   :text-block-wrapper wrap-callout
+   :render-read render-callout-read})

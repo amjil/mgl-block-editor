@@ -13,7 +13,9 @@
             [block-editor.plugins.image :as image]
             [block-editor.plugins.divider :as divider]
             [block-editor.plugins.list-item :as list-item]
-            [block-editor.plugins.ordered-list-item :as ordered-list-item]))
+            [block-editor.plugins.ordered-list-item :as ordered-list-item]
+            [block-editor.plugins.callout :as callout]
+            [block-editor.plugins.bookmark :as bookmark]))
 
 (def task-plugin task/task-plugin)
 (def blockquote-plugin blockquote/blockquote-plugin)
@@ -21,6 +23,8 @@
 (def divider-plugin divider/divider-plugin)
 (def list-item-plugin list-item/list-item-plugin)
 (def ordered-list-item-plugin ordered-list-item/ordered-list-item-plugin)
+(def callout-plugin callout/callout-plugin)
+(def bookmark-plugin bookmark/bookmark-plugin)
 
 (defn default-plugins
   "Built-in plugins merged by `build-config` (user plugins override by :type)."
@@ -30,4 +34,6 @@
    (image/image-plugin)
    (divider/divider-plugin)
    (list-item/list-item-plugin)
-   (ordered-list-item/ordered-list-item-plugin)])
+   (ordered-list-item/ordered-list-item-plugin)
+   (callout/callout-plugin)
+   (bookmark/bookmark-plugin)])
