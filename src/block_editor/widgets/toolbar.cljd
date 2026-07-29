@@ -69,6 +69,8 @@
            ;; 3. Lists, tasks, and quotes (includes Task)
            (toolbar-button m.Icons/format_list_bulleted "List" (= block-type :list-item)
                            #(ops/convert-block! !state active-id :list-item))
+           (toolbar-button m.Icons/format_list_numbered "Numbered List" (= block-type :ordered-list-item)
+                #(ops/convert-block! !state active-id :ordered-list-item))
            (toolbar-button m.Icons/check_box "Task" (= block-type :task)
                            #(ops/convert-block! !state active-id :task))
            (toolbar-button m.Icons/format_quote "Quote" (= block-type :blockquote)

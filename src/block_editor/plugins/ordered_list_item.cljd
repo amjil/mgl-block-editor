@@ -1,0 +1,87 @@
+(ns block-editor.plugins.ordered-list-item
+  "Ordered (numbered) list item plugin. Supports hierarchical nesting and dynamic numbering."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:mongol/mongol.dart" :as mgl]
+            [block-editor.widgets.reader :as reader]
+            [block-editor.utils.inline :as inline]
+            [block-editor.utils.text :as text]))
+
+(defn- get-ordered-list-number
+  "Dynamically calculates the 1-based index among sibling ordered-list items,
+   supporting nested hierarchies natively."
+  [state block-id]
+  (let [blocks (:blocks state)
+        ;; 1. Find the parent of the current block (if nested)
+        parent-entry (some (fn [[pid b]]
+                             (when (some #{block-id} (:children b)) pid))
+                           blocks)
+        ;; 2. Sibling ids: parent's :children when nested, else root :root
+        sibling-ids (if parent-entry
+                      (:children (get blocks parent-entry) [])
+                      (:root state))
+        ;; 3. Keep only sibling :ordered-list-item blocks
+        ordered-siblings (filter (fn [id]
+                                   (= :ordered-list-item (:type (get blocks id))))
+                                 sibling-ids)
+        ;; 4. Index of the current block among those siblings
+        idx (first (keep-indexed (fn [i id] (when (= id block-id) i)) ordered-siblings))]
+    (if idx (inc idx) 1)))
+
+(defn wrap-ordered-list-item
+  "Wraps the editable text widget with a dynamic number prefix above the first vertical column."
+  [text-widget id !state _root-index block style _cfg]
+  (let [state @!state
+        num-str (str (get-ordered-list-number state id) ".")
+        col-width (if style (text/get-exact-column-width style) 18.0)
+        ;; Exact centering offset for the number prefix
+        num-left-pad (max 0.0 (/ (- col-width 14.0) 2.0))]
+    (m/Stack
+     .alignment m.Alignment/topLeft
+     .clipBehavior m.Clip/none
+     .children
+     [;; 1. Reserve 24px top padding for the number prefix
+      (m/Container
+       .padding (m.EdgeInsets/only .top 24.0)
+       .child text-widget)
+      
+      ;; 2. Render the dynamic number, aligned to the first column centerline
+      (m/Padding
+       .padding (m.EdgeInsets/only .top 4.0 .left num-left-pad)
+       .child
+       (mgl/MongolText num-str
+                       .style (m/TextStyle
+                               .color m.Colors/grey
+                               .fontSize 12.0
+                               .fontWeight m.FontWeight/bold)))])))
+
+(defn- render-ordered-list-read
+  [block base-style on-link-tap !state]
+  (let [clean (inline/strip-properties (or (:content block) ""))
+        state @!state
+        num-str (str (get-ordered-list-number state (:id block)) ".")
+        col-width (if base-style (text/get-exact-column-width base-style) 18.0)
+        num-left-pad (max 0.0 (/ (- col-width 14.0) 2.0))]
+    (m/Stack
+     .alignment m.Alignment/topLeft
+     .clipBehavior m.Clip/none
+     .children
+     [(m/Container
+       .padding (m.EdgeInsets/only .top 24.0)
+       .child (reader/wiki-mongol-text-flex clean base-style on-link-tap))
+      
+      (m/Padding
+       .padding (m.EdgeInsets/only .top 4.0 .left num-left-pad)
+       .child
+       (mgl/MongolText num-str
+                       .style (m/TextStyle
+                               .color m.Colors/grey
+                               .fontSize 12.0
+                               .fontWeight m.FontWeight/bold)))])))
+
+(defn ordered-list-item-plugin
+  "Ordered list item block plugin."
+  []
+  {:type :ordered-list-item
+   :text-block-type? true
+   :text-block-wrapper wrap-ordered-list-item
+   :render-read render-ordered-list-read})
