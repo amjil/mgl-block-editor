@@ -46,7 +46,7 @@
                    soff (max 0 (min offset (count content)))
                    [sb sa] (text-cmd/divide-spans-for-block (:content-spans block []) soff)
                    new-block {:id new-id 
-                              :type (if (contains? #{:list-item :blockquote} (:type block)) (:type block) :paragraph)
+                              :type (if (contains? #{:list-item :blockquote :ordered-list-item} (:type block)) (:type block) :paragraph)
                               :content (subs content soff) 
                               :content-spans sa 
                               :children []}
@@ -67,13 +67,18 @@
     (:active-block-id @!state)))
 
 (defn merge-with-previous! 
-  "Merges block into the previous sibling. Adopts any children the deleted block had."
+  "Merges block into the VISUALLY previous block (flattened tree). 
+   Adopts any children the deleted block had, perfectly handling nested backspaces."
   [!state block-id]
   (let [state-val @!state
-        {:keys [parent-id index siblings]} (find-parent-info state-val block-id)]
-    (when (> index 0)
+        ;; 🌟 Core fix: get the visually visible block sequence of the current document
+        visible-blocks (collapse/get-visible-root (:root state-val) (:blocks state-val))
+        idx (.indexOf visible-blocks block-id)]
+    (when (> idx 0)
       (history/record-snapshot! !state) ;; 🌟 Snapshot: structural merge
-      (let [prev-id (nth siblings (dec index))
+      (let [;; 🌟 Core fix: take the visually previous block, ignoring hierarchy
+            prev-id (nth visible-blocks (dec idx))
+            {:keys [parent-id]} (find-parent-info state-val block-id)
             prev-block (get-in state-val [:blocks prev-id])
             curr-block (get-in state-val [:blocks block-id])
             
@@ -88,16 +93,17 @@
         
         (swap! !state
                (fn [s]
-                 (let [;; Remove from parent
+                 (let [;; 1. Remove the current block from its parent
                        s1 (if (= parent-id :root)
                             (update s :root #(vec (remove #{block-id} %)))
                             (update-in s [:blocks parent-id :children] #(vec (remove #{block-id} %))))]
                    (-> s1
-                       ;; Append text to previous sibling
+                       ;; 2. Append the current block's text to the end of the visually previous block
                        (assoc-in [:blocks prev-id :content] (str prev-content curr-content))
                        (assoc-in [:blocks prev-id :content-spans] merged-spans)
-                       ;; Adopt children
+                       ;; 3. Adopt the current block's children (if any) into the visually previous block
                        (update-in [:blocks prev-id :children] #(vec (concat (or % []) orphaned-children)))
+                       ;; 4. Destroy the current block and focus
                        (update :blocks dissoc block-id)
                        (assoc :active-block-id prev-id)))))
         {:prev-id prev-id :new-offset prev-len}))))
@@ -356,7 +362,7 @@
     (when (>= slash-idx 0)
       (text-cmd/delete-range !state block-id slash-idx (- (count content) slash-idx))
       (let [updated-content (get-in @!state [:blocks block-id :content] "")]
-        (if (and (contains? #{:image :divider :table} command-type)
+        (if (and (contains? #{:image :divider :table :bookmark} command-type)
                  (pos? (count updated-content)))
           (do
             (swap! !state
