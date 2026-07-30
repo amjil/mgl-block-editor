@@ -125,6 +125,8 @@
 
            (toolbar-button m.Icons/lightbulb_outline "Callout" (= block-type :callout)
                            #(ops/convert-block! !state active-id :callout))
+           (toolbar-button m/Icons.arrow_right "Toggle List" (= block-type :toggle)
+                           #(ops/convert-block! !state active-id :toggle))
 
            (m/SizedBox .width 16.0)]))
 
