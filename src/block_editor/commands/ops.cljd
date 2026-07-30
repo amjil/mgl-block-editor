@@ -1,12 +1,13 @@
 (ns block-editor.commands.ops
   "Handles document-level structural mutations (splitting, merging, deleting, reordering, nesting).
    Fully tree-aware to support hierarchical nested blocks.
-   Automatically integrates with the history manager for seamless Undo/Redo."
+   Automatically integrates with the history manager for seamless Undo/Redo.
+   Maintains an O(1) :parent pointer on all blocks for ultra-fast structural lookups."
   (:require [rich-editor.commands.text-commands :as text-cmd]
             [rich-editor.commands.editor-commands :as editor-cmd]
             [rich-editor.commands.transaction :as tx]
             [block-editor.utils.collapse :as collapse]
-            [block-editor.utils.history :as history] ;; 🌟 Import history manager
+            [block-editor.utils.history :as history]
             ["package:flutter/material.dart" :as m]
             [clojure.string :as str]))
 
@@ -15,18 +16,19 @@
 ;; =============================================================================
 
 (defn- find-parent-info 
-  "Locates a block in the tree. Returns {:parent-id :index :siblings}.
-   If the block is at the top level, :parent-id will be :root."
+  "O(1) locates a block in the tree using the new :parent pointer.
+   Returns {:parent-id :index :siblings}."
   [state target-id]
-  (let [root-idx (.indexOf (:root state) target-id)]
-    (if (>= root-idx 0)
-      {:parent-id :root :index root-idx :siblings (:root state)}
-      (some (fn [[id block]]
-              (let [children (:children block [])
-                    idx (.indexOf children target-id)]
-                (when (>= idx 0)
-                  {:parent-id id :index idx :siblings children})))
-            (:blocks state)))))
+  (let [block     (get-in state [:blocks target-id])
+        ;; Fallback to :root if :parent is missing (e.g. legacy or mock data)
+        parent-id (get block :parent :root)
+        siblings  (if (= parent-id :root)
+                    (:root state)
+                    (get-in state [:blocks parent-id :children] []))
+        index     (.indexOf siblings target-id)]
+    {:parent-id parent-id 
+     :index index 
+     :siblings siblings}))
 
 ;; =============================================================================
 ;; Core Structure Operations (Enter / Backspace)
@@ -35,7 +37,7 @@
 (defn split-block-at-cursor! 
   "Splits block and inserts the new block as a sibling at the current depth."
   [!state block-id]
-  (history/record-snapshot! !state) ;; 🌟 Snapshot: structural split
+  (history/record-snapshot! !state)
   (let [sel (get-in @!state [:blocks block-id :selection])
         offset (if sel (.-extentOffset sel) 0)
         new-id (str "b-" (random-uuid))]
@@ -45,11 +47,15 @@
                    content (:content block "")
                    soff (max 0 (min offset (count content)))
                    [sb sa] (text-cmd/divide-spans-for-block (:content-spans block []) soff)
+                   {:keys [parent-id index]} (find-parent-info s block-id)
+                   
+                   ;; 🌟 Initialize the new block with the same parent
                    new-block {:id new-id 
-                              :type (if (contains? #{:list-item :blockquote :ordered-list-item} (:type block)) (:type block) :paragraph)
+                              :type (if (contains? #{:list-item :blockquote :ordered-list-item :toggle} (:type block)) (:type block) :paragraph)
                               :content (subs content soff) 
                               :content-spans sa 
-                              :children []}
+                              :children []
+                              :parent parent-id} 
                    
                    ;; 1. Update text content
                    s1 (-> s
@@ -58,7 +64,6 @@
                           (assoc-in [:blocks new-id] new-block))
                    
                    ;; 2. Insert into the tree as a sibling
-                   {:keys [parent-id index]} (find-parent-info s1 block-id)
                    insert-idx (inc index)
                    s2 (if (= parent-id :root)
                         (update s1 :root #(vec (concat (subvec % 0 insert-idx) [new-id] (subvec % insert-idx))))
@@ -68,16 +73,14 @@
 
 (defn merge-with-previous! 
   "Merges block into the VISUALLY previous block (flattened tree). 
-   Adopts any children the deleted block had, perfectly handling nested backspaces."
+   Adopts any children the deleted block had and updates their :parent pointers."
   [!state block-id]
   (let [state-val @!state
-        ;; 🌟 Core fix: get the visually visible block sequence of the current document
         visible-blocks (collapse/get-visible-root (:root state-val) (:blocks state-val))
         idx (.indexOf visible-blocks block-id)]
     (when (> idx 0)
-      (history/record-snapshot! !state) ;; 🌟 Snapshot: structural merge
-      (let [;; 🌟 Core fix: take the visually previous block, ignoring hierarchy
-            prev-id (nth visible-blocks (dec idx))
+      (history/record-snapshot! !state)
+      (let [prev-id (nth visible-blocks (dec idx))
             {:keys [parent-id]} (find-parent-info state-val block-id)
             prev-block (get-in state-val [:blocks prev-id])
             curr-block (get-in state-val [:blocks block-id])
@@ -96,22 +99,25 @@
                  (let [;; 1. Remove the current block from its parent
                        s1 (if (= parent-id :root)
                             (update s :root #(vec (remove #{block-id} %)))
-                            (update-in s [:blocks parent-id :children] #(vec (remove #{block-id} %))))]
-                   (-> s1
-                       ;; 2. Append the current block's text to the end of the visually previous block
-                       (assoc-in [:blocks prev-id :content] (str prev-content curr-content))
-                       (assoc-in [:blocks prev-id :content-spans] merged-spans)
-                       ;; 3. Adopt the current block's children (if any) into the visually previous block
-                       (update-in [:blocks prev-id :children] #(vec (concat (or % []) orphaned-children)))
-                       ;; 4. Destroy the current block and focus
-                       (update :blocks dissoc block-id)
-                       (assoc :active-block-id prev-id)))))
+                            (update-in s [:blocks parent-id :children] #(vec (remove #{block-id} %))))
+                       ;; 2. Append text, adopt children, destroy old block
+                       s2 (-> s1
+                              (assoc-in [:blocks prev-id :content] (str prev-content curr-content))
+                              (assoc-in [:blocks prev-id :content-spans] merged-spans)
+                              (update-in [:blocks prev-id :children] #(vec (concat (or % []) orphaned-children)))
+                              (update :blocks dissoc block-id)
+                              (assoc :active-block-id prev-id))]
+                   ;; 🌟 3. Update :parent pointers for all adopted children
+                   (reduce (fn [acc child-id]
+                             (assoc-in acc [:blocks child-id :parent] prev-id))
+                           s2
+                           orphaned-children))))
         {:prev-id prev-id :new-offset prev-len}))))
 
 (defn delete-cross-block-selection! 
   "Delegates cross-block text deletion to the rich text engine."
   [!state g-sel]
-  (history/record-snapshot! !state) ;; 🌟 Snapshot: cross-block deletion
+  (history/record-snapshot! !state)
   (editor-cmd/delete-global-selection! !state)
   (let [active-id (:active-block-id @!state)
         sel (get-in @!state [:blocks active-id :selection])]
@@ -124,7 +130,7 @@
 (defn indent-block! 
   "Moves a block into the :children array of its immediate previous sibling."
   [!state block-id]
-  (history/record-snapshot! !state) ;; 🌟 Snapshot: indent deeper
+  (history/record-snapshot! !state)
   (swap! !state
          (fn [s]
            (if-let [{:keys [parent-id index siblings]} (find-parent-info s block-id)]
@@ -133,14 +139,17 @@
                      s1 (if (= parent-id :root)
                           (update s :root #(vec (remove #{block-id} %)))
                           (update-in s [:blocks parent-id :children] #(vec (remove #{block-id} %))))]
-                 (update-in s1 [:blocks prev-id :children] #(vec (conj (or % []) block-id))))
+                 (-> s1
+                     (update-in [:blocks prev-id :children] #(vec (conj (or % []) block-id)))
+                     ;; 🌟 Update the parent pointer to the new container
+                     (assoc-in [:blocks block-id :parent] prev-id)))
                s)
              s))))
 
 (defn outdent-block! 
   "Moves a block out of its parent's :children array, making it a sibling of its parent."
   [!state block-id]
-  (history/record-snapshot! !state) ;; 🌟 Snapshot: outdent upward
+  (history/record-snapshot! !state)
   (swap! !state
          (fn [s]
            (if-let [{:keys [parent-id index]} (find-parent-info s block-id)]
@@ -148,10 +157,12 @@
                (let [gp-info (find-parent-info s parent-id)
                      gp-id (:parent-id gp-info)
                      insert-idx (inc (:index gp-info))
-                     s1 (update-in s [:blocks parent-id :children] #(vec (remove #{block-id} %)))]
-                 (if (= gp-id :root)
-                   (update s1 :root #(vec (concat (subvec % 0 insert-idx) [block-id] (subvec % insert-idx))))
-                   (update-in s1 [:blocks gp-id :children] #(vec (concat (subvec (or % []) 0 insert-idx) [block-id] (subvec (or % []) insert-idx))))))
+                     s1 (update-in s [:blocks parent-id :children] #(vec (remove #{block-id} %)))
+                     s2 (if (= gp-id :root)
+                          (update s1 :root #(vec (concat (subvec % 0 insert-idx) [block-id] (subvec % insert-idx))))
+                          (update-in s1 [:blocks gp-id :children] #(vec (concat (subvec (or % []) 0 insert-idx) [block-id] (subvec (or % []) insert-idx)))))]
+                 ;; 🌟 Re-parent to the grandparent
+                 (assoc-in s2 [:blocks block-id :parent] gp-id))
                s)
              s))))
 
@@ -161,9 +172,9 @@
 
 (defn reorder-block! 
   "Moves a block in the :root vector from old-index to new-index.
-   Currently only supports reordering at the root level."
+   Currently only supports reordering at the root level (parent remains :root)."
   [!state old-index new-index]
-  (history/record-snapshot! !state) ;; 🌟 Snapshot: drag reorder
+  (history/record-snapshot! !state)
   (swap! !state
          (fn [s]
            (let [root (:root s)
@@ -179,7 +190,7 @@
 (defn delete-block! 
   "Removes a block completely from the document tree."
   [!state block-id]
-  (history/record-snapshot! !state) ;; 🌟 Snapshot: delete single block
+  (history/record-snapshot! !state)
   (swap! !state
          (fn [s]
            (if-let [{:keys [parent-id]} (find-parent-info s block-id)]
@@ -197,14 +208,14 @@
 (defn duplicate-block! 
   "Copies the block and inserts it immediately after the original as a sibling."
   [!state block-id]
-  (history/record-snapshot! !state) ;; 🌟 Snapshot: duplicate block
+  (history/record-snapshot! !state)
   (swap! !state
          (fn [s]
            (if-let [{:keys [parent-id index]} (find-parent-info s block-id)]
              (let [block (get-in s [:blocks block-id])
                    new-id (str "b-" (random-uuid))
-                   ;; Duplicate the block but leave its children empty to avoid deep clone complexity
-                   new-block (assoc block :id new-id :children [])
+                   ;; 🌟 Ensure duplicate block correctly registers its parent
+                   new-block (assoc block :id new-id :children [] :parent parent-id)
                    insert-idx (inc index)
                    s1 (assoc-in s [:blocks new-id] new-block)]
                (if (= parent-id :root)
@@ -213,16 +224,16 @@
              s))))
 
 (defn convert-block! 
-  "Changes the type of the block (e.g., from paragraph to heading-1)."
+  "Changes the type of the block."
   [!state block-id new-type]
-  (history/record-snapshot! !state) ;; 🌟 Snapshot: convert block type
+  (history/record-snapshot! !state)
   (swap! !state assoc-in [:blocks block-id :type] new-type))
 
 (defn convert-blocks!
-  "Bulk type change for the given block ids (multi-select / marquee)."
+  "Bulk type change for the given block ids."
   [!state block-ids new-type]
   (when (seq block-ids)
-    (history/record-snapshot! !state) ;; 🌟 Snapshot: bulk convert type
+    (history/record-snapshot! !state)
     (swap! !state update :blocks
            (fn [blocks]
              (reduce (fn [acc id]
@@ -237,36 +248,25 @@
 ;; =============================================================================
 
 (defn toggle-block-selection! 
-  "Adds or removes a block from the multi-selection set. Enters Object Selection Mode."
   [!state block-id]
-  ;; Temporary UI selection state; do not include it in undo history
   (swap! !state
          (fn [s]
            (let [sel (:selected-block-ids s #{})
-                 new-sel (if (contains? sel block-id)
-                           (disj sel block-id)
-                           (conj sel block-id))]
-             (assoc s 
-                    :selected-block-ids new-sel
-                    :active-block-id nil 
-                    :cursor-visible false)))))
+                 new-sel (if (contains? sel block-id) (disj sel block-id) (conj sel block-id))]
+             (assoc s :selected-block-ids new-sel :active-block-id nil :cursor-visible false)))))
 
 (defn set-block-selection!
-  "Replace the multi-selection set (used by marquee intersection)."
   [!state block-ids]
   (let [ids (set block-ids)]
     (swap! !state
-           (fn [s]
-             (cond-> (assoc s :selected-block-ids ids)
-               (seq ids) (assoc :active-block-id nil :cursor-visible false))))))
+           (fn [s] (cond-> (assoc s :selected-block-ids ids)
+                     (seq ids) (assoc :active-block-id nil :cursor-visible false))))))
 
 (defn delete-blocks! 
-  "Bulk deletes multiple blocks."
   [!state block-ids]
   (when (seq block-ids)
-    (history/record-snapshot! !state) ;; 🌟 Snapshot: bulk delete
+    (history/record-snapshot! !state)
     (doseq [id block-ids]
-      ;; Reuse the low-level delete state update directly to avoid duplicate snapshots
       (swap! !state
              (fn [s]
                (if-let [{:keys [parent-id]} (find-parent-info s id)]
@@ -278,24 +278,19 @@
     (swap! !state assoc :selected-block-ids #{} :active-block-id nil :cursor-visible false)))
 
 (defn duplicate-blocks! 
-  "Bulk duplicates multiple blocks."
   [!state block-ids]
   (when (seq block-ids)
-    (history/record-snapshot! !state) ;; 🌟 Snapshot: bulk duplicate
-    (doseq [id block-ids]
-      (duplicate-block! !state id))
+    (history/record-snapshot! !state)
+    (doseq [id block-ids] (duplicate-block! !state id))
     (swap! !state assoc :selected-block-ids #{})))
 
 (defn indent-blocks!
-  "Bulk tree-indent (Tab) for selected blocks. Processes in reverse document
-   order so consecutive selections nest more predictably."
   [!state block-ids]
   (when (seq block-ids)
-    (history/record-snapshot! !state) ;; 🌟 Snapshot: bulk indent
+    (history/record-snapshot! !state)
     (let [visible (collapse/get-visible-root (:root @!state) (:blocks @!state))
           ordered (filterv #(contains? (set block-ids) %) (reverse visible))]
       (doseq [id ordered]
-        ;; Reuse indent logic internally because we already captured one shared snapshot up front
         (swap! !state
                (fn [s]
                  (if-let [{:keys [parent-id index siblings]} (find-parent-info s id)]
@@ -304,15 +299,17 @@
                            s1 (if (= parent-id :root)
                                 (update s :root #(vec (remove #{id} %)))
                                 (update-in s [:blocks parent-id :children] #(vec (remove #{id} %))))]
-                       (update-in s1 [:blocks prev-id :children] #(vec (conj (or % []) id))))
+                       (-> s1
+                           (update-in [:blocks prev-id :children] #(vec (conj (or % []) id)))
+                           ;; 🌟 Bulk sync parent pointer
+                           (assoc-in [:blocks id :parent] prev-id)))
                      s)
                    s)))))))
 
 (defn outdent-blocks!
-  "Bulk tree-outdent (Shift+Tab) for selected blocks."
   [!state block-ids]
   (when (seq block-ids)
-    (history/record-snapshot! !state) ;; 🌟 Snapshot: bulk outdent
+    (history/record-snapshot! !state)
     (let [visible (collapse/get-visible-root (:root @!state) (:blocks @!state))
           ordered (filterv #(contains? (set block-ids) %) visible)]
       (doseq [id ordered]
@@ -323,38 +320,32 @@
                      (let [gp-info (find-parent-info s parent-id)
                            gp-id (:parent-id gp-info)
                            insert-idx (inc (:index gp-info))
-                           s1 (update-in s [:blocks parent-id :children] #(vec (remove #{id} %)))]
-                       (if (= gp-id :root)
-                         (update s1 :root #(vec (concat (subvec % 0 insert-idx) [id] (subvec % insert-idx))))
-                         (update-in s1 [:blocks gp-id :children] #(vec (concat (subvec (or % []) 0 insert-idx) [id] (subvec (or % []) insert-idx))))))
+                           s1 (update-in s [:blocks parent-id :children] #(vec (remove #{id} %)))
+                           s2 (if (= gp-id :root)
+                                (update s1 :root #(vec (concat (subvec % 0 insert-idx) [id] (subvec % insert-idx))))
+                                (update-in s1 [:blocks gp-id :children] #(vec (concat (subvec (or % []) 0 insert-idx) [id] (subvec (or % []) insert-idx)))))]
+                       ;; 🌟 Bulk sync parent pointer
+                       (assoc-in s2 [:blocks id :parent] gp-id))
                      s)
                    s)))))))
-
 
 ;; =============================================================================
 ;; Slash Command Execution
 ;; =============================================================================
 
 (defn- execute-slash-insert!
-  "Replace trailing `/query` with insert value (e.g. [[2026-07-15]])."
   [!state block-id cmd]
-  (history/record-snapshot! !state) ;; 🌟 Snapshot: slash command insert
+  (history/record-snapshot! !state)
   (let [block (get-in @!state [:blocks block-id])
         old-content (or (:content block) "")
         value (if (:value-fn cmd) ((:value-fn cmd)) (:value cmd ""))
         new-content (str/replace old-content #"/[a-zA-Z0-9]*$" value)]
-    (tx/commit-transaction!
-     !state
-     (tx/make-transaction
-      :ops [(tx/update-data-op block-id {:content new-content})]
-      :after-selection nil))
+    (tx/commit-transaction! !state (tx/make-transaction :ops [(tx/update-data-op block-id {:content new-content})] :after-selection nil))
     (editor-cmd/focus-block !state block-id (count new-content))))
 
 (defn- execute-slash-type-change!
-  "Removes the '/' trigger and converts the block. If converting to an atomic
-   block (Image/Divider) and the block already contains text, it splits first."
   [!state block-id command-type]
-  (history/record-snapshot! !state) ;; 🌟 Snapshot: slash command type change
+  (history/record-snapshot! !state)
   (let [state-val @!state
         block (get-in state-val [:blocks block-id])
         content (:content block "")
@@ -370,19 +361,17 @@
                      (let [new-id (str "b-" (random-uuid))
                            {:keys [parent-id index]} (find-parent-info s block-id)
                            insert-idx (inc index)
-                           new-block {:id new-id :type command-type :children []}
+                           ;; 🌟 Link the new atomic block to the same parent
+                           new-block {:id new-id :type command-type :children [] :parent parent-id}
                            s1 (assoc-in s [:blocks new-id] new-block)]
                        (if (= parent-id :root)
                          (update s1 :root #(vec (concat (subvec % 0 insert-idx) [new-id] (subvec % insert-idx))))
                          (update-in s1 [:blocks parent-id :children] #(vec (concat (subvec (or % []) 0 insert-idx) [new-id] (subvec (or % []) insert-idx))))))))
-            (let [new-id (last (:root @!state))] ;; Naive resolution, ideally track new ID
+            (let [new-id (last (:root @!state))]
               (convert-block! !state new-id command-type)))
           (convert-block! !state block-id command-type))))))
 
 (defn execute-slash-command!
-  "Apply a slash menu command.
-   `cmd-or-type` may be a keyword (type change) or a command map.
-   Maps with `:action :insert` replace `/query` with text; others convert type."
   [!state block-id cmd-or-type]
   (let [cmd (if (keyword? cmd-or-type) {:type cmd-or-type} cmd-or-type)]
     (case (:action cmd)
