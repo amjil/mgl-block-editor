@@ -55,20 +55,25 @@
                                .fontWeight m.FontWeight/bold)))])))
 
 (defn- render-ordered-list-read
+  "Read-mode mirror of wrap-ordered-list-item.
+   Must NOT use wiki-mongol-text-flex here: Expanded inside Stack breaks layout
+   and pushes the number into its own column to the left of the body text."
   [block base-style on-link-tap !state]
   (let [clean (inline/strip-properties (or (:content block) ""))
-        state @!state
-        num-str (str (get-ordered-list-number state (:id block)) ".")
+        num (if !state (get-ordered-list-number @!state (:id block)) 1)
+        num-str (str num ".")
         col-width (if base-style (text/get-exact-column-width base-style) 18.0)
         num-left-pad (max 0.0 (/ (- col-width 14.0) 2.0))]
     (m/Stack
+     .fit m.StackFit/expand
      .alignment m.Alignment/topLeft
      .clipBehavior m.Clip/none
      .children
-     [(m/Container
+     [;; Same top reserve as edit wrapper; plain wiki text (no Expanded).
+      (m/Padding
        .padding (m.EdgeInsets/only .top 24.0)
-       .child (reader/wiki-mongol-text-flex clean base-style on-link-tap))
-      
+       .child (reader/wiki-mongol-text clean base-style on-link-tap))
+
       (m/Padding
        .padding (m.EdgeInsets/only .top 4.0 .left num-left-pad)
        .child

@@ -120,34 +120,34 @@
         ops (:block-ops cfg)
         !selecting? (atom false)
         !select-start (atom nil)
-        !select-rect (atom nil)]
-    
+        !select-rect (atom nil)
+        marquee-key (m/GlobalKey)]
+
     (swap! !state assoc :editor-config cfg)
     (autocomplete/install-sniffer! !state)
 
     (f/widget
      :managed [editor-focus-node (m/FocusNode)
-               marquee-key (m/GlobalKey)
                scroll-ctrl (m/ScrollController)]
      :watch [state !state
              selecting? !selecting?
              select-rect !select-rect]
-     
+
      (let [root-ids (:root state)
-           
+
            block-list
            (m/ReorderableListView.builder
             .scrollController scroll-ctrl
             .scrollDirection m/Axis.horizontal
             .padding padding
-            .buildDefaultDragHandles false 
+            .buildDefaultDragHandles false
             .onReorder (fn [^int old-idx ^int new-idx]
                          (when-let [reorder-fn (:reorder-block! ops)]
                            (reorder-fn !state old-idx new-idx)))
             .proxyDecorator (fn [^m/Widget child ^int index ^m/Animation animation]
-                              (m/AnimatedBuilder 
-                               .animation animation 
-                               .builder (fn [ctx _] 
+                              (m/AnimatedBuilder
+                               .animation animation
+                               .builder (fn [ctx _]
                                           (let [anim-val (.-value animation)
                                                 rotation (* anim-val 0.035)
                                                 scale (+ 1.0 (* anim-val 0.03))]
@@ -163,7 +163,7 @@
                 (m/KeyedSubtree
                  .key (m/ValueKey id)
                  .child (block-tree/block-subtree id !state idx cfg show-block-handles? 0)))))
-           
+
            interactive-area
            (m/Builder
             .builder
@@ -180,7 +180,7 @@
                      (reset! !select-rect (m/Rect.fromPoints pos pos))
                      (swap! !state assoc :selected-block-ids #{}))
                    (.requestFocus editor-focus-node)))
-               
+
                .onPointerMove
                (fn [e]
                  (when @!selecting?
@@ -195,7 +195,7 @@
                        (when (>= (- ms @!marquee-last-intersect-ms) intersect-throttle-ms)
                          (reset! !marquee-last-intersect-ms ms)
                          (handle-selection-intersection! !state rect marquee-key))))))
-               
+
                .onPointerUp
                (fn [_]
                  (reset! !selecting? false)
@@ -206,13 +206,13 @@
                     (try
                       (.requestFocus editor-focus-node)
                       (catch Exception _)))))
-               
+
                .onPointerCancel
                (fn [_]
                  (reset! !selecting? false)
                  (reset! !select-start nil)
                  (reset! !select-rect nil))
-               
+
                .child
                (m/GestureDetector
                 .behavior m/HitTestBehavior.translucent
@@ -226,11 +226,11 @@
                 (m/KeyedSubtree
                  .key marquee-key
                  .child block-list)))))
-           
-           core-input-area 
+
+           core-input-area
            (m/Focus
             .focusNode editor-focus-node
-            .onFocusChange 
+            .onFocusChange
             (fn [has-focus?]
               (if has-focus?
                 (do
@@ -250,7 +250,7 @@
         .child
         (if (is-mobile?)
           (f/widget
-           :let [info (merge options/keyboard-option 
+           :let [info (merge options/keyboard-option
                              {:keyboard/mongol-font-family "OyunQaganTig"
                               :keyboard/key-container-color m/Colors.grey.shade500
                               :keyboard/font-size 16})]
@@ -260,10 +260,10 @@
             [(m/Expanded
               .child
               (editor-stack core-input-area !state cfg selecting? select-rect
-               [(if (or (:active-block-id state) (:external-keyboard-delegate state))
-                  (keyboard/candidates nil)
-                  (m/SizedBox.shrink))]))
-             
+                            [(if (or (:active-block-id state) (:external-keyboard-delegate state))
+                               (keyboard/candidates nil)
+                               (m/SizedBox.shrink))]))
+
              (if toolbar toolbar (m/SizedBox.shrink))
              (if (or (:active-block-id state) (:external-keyboard-delegate state))
                (keyboard/keyboard
@@ -282,7 +282,7 @@
                           (when-let [on-backspace-fn (:on-backspace (:external-keyboard-delegate @!state))] (on-backspace-fn))
                           (kb-handlers/handle-backspace-action !state cfg)))))}})
                (m/SizedBox.shrink))]))
-          
+
           (overlay/ime-global-wrapper
            (m/Column
             .children
