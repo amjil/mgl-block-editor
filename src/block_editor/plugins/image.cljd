@@ -10,7 +10,8 @@
 (def ^:private default-width-ratio 0.5)
 (def ^:private min-width-ratio 0.15)
 (def ^:private max-width-ratio 1.0)
-(def ^:private handle-size 18.0)
+(def ^:private handle-size 10.0)
+(def ^:private handle-hit-slop 8.0)
 
 ;; =============================================================================
 ;; 1. Fullscreen Image Viewer
@@ -80,33 +81,42 @@
   (min max-width-ratio (max min-width-ratio r)))
 
 (defn- resize-handle
-  "Bottom-right drag handle — pans update :width-ratio from horizontal delta."
+  "Bottom-right square handle — classic desktop object-resize affordance."
   [!state block-id screen-width]
   (m/Positioned
-   .right (- (/ handle-size 2.0))
-   .bottom (- (/ handle-size 2.0))
+   .right 0.0
+   .bottom 8.0 ;; match image Container bottom margin so handle sits on card corner
    .child
-   (m/GestureDetector
-    .behavior m.HitTestBehavior/opaque
-    .onPanUpdate
-    (fn [^m/DragUpdateDetails details]
-      (let [dx (.-dx (.-delta details))
-            current (get-in @!state [:blocks block-id :data :width-ratio] default-width-ratio)
-            new-ratio (clamp-ratio (+ current (/ dx screen-width)))]
-        (set-width-ratio! !state block-id new-ratio))
-      nil)
+   (m/MouseRegion
+    .cursor m.SystemMouseCursors/resizeDownRight
     .child
-    (m/Container
-     .width handle-size
-     .height handle-size
-     .decoration (m/BoxDecoration
-                  .color m.Colors/blue
-                  .shape m.BoxShape/circle
-                  .border (m/Border.all .color m.Colors/white .width 2.0)
-                  .boxShadow [(m/BoxShadow
-                               .color (-> m.Colors/black (.withOpacity 0.25))
-                               .blurRadius 3.0
-                               .offset (m/Offset 0.0 1.0))])))))
+    (m/GestureDetector
+     .behavior m.HitTestBehavior/opaque
+     .onPanStart (fn [_] nil)
+     .onPanUpdate
+     (fn [^m/DragUpdateDetails details]
+       (let [dx (.-dx (.-delta details))
+             current (get-in @!state [:blocks block-id :data :width-ratio] default-width-ratio)
+             new-ratio (clamp-ratio (+ current (/ dx screen-width)))]
+         (set-width-ratio! !state block-id new-ratio))
+       nil)
+     .child
+     (m/Container
+      .width (+ handle-size (* 2.0 handle-hit-slop))
+      .height (+ handle-size (* 2.0 handle-hit-slop))
+      .alignment m.Alignment/center
+      .color m.Colors/transparent
+      .child
+      (m/Container
+       .width handle-size
+       .height handle-size
+       .decoration (m/BoxDecoration
+                    .color m.Colors/white
+                    .border (m/Border.all .color m.Colors/blue .width 1.5)
+                    .boxShadow [(m/BoxShadow
+                                 .color (-> m.Colors/black (.withOpacity 0.2))
+                                 .blurRadius 2.0
+                                 .offset (m/Offset 0.0 1.0))])))))))
 
 ;; =============================================================================
 ;; 3. Edit Mode Renderer
@@ -136,84 +146,91 @@
            .mainAxisSize m.MainAxisSize/min
            .crossAxisAlignment m.CrossAxisAlignment/start
            .children
-           [(m/Builder
-             .builder
-             (fn [^m/BuildContext img-ctx]
-               (m/GestureDetector
-                .behavior m.HitTestBehavior/opaque
-                .onTapUp
-                (fn [^m/TapUpDetails details]
-                  (try
-                    (let [box ^m/RenderBox (.findRenderObject img-ctx)
-                          local-y (.-dy (.globalToLocal box (.globalPosition details)))
-                          height (.-height (.-size box))
-                          new-offset (if (< local-y (/ height 2.0)) 0 1)]
-                      (editor-cmd/focus-block !state id new-offset))
-                    (catch Exception _ nil))
-                  nil)
-                .onDoubleTap
-                (fn []
-                  (when (seq url*)
-                    (-> (m/Navigator.of ctx) (.push (image-fullscreen-route url* hero-tag))))
-                  nil)
-                .onLongPress
-                (fn []
-                  (editor-cmd/focus-block !state id 0)
-                  (link/open-image-url-dialog! !state id)
-                  nil)
-                .child
-                (m/Container
-                 .width display-width
-                 .margin (m.EdgeInsets/only .bottom 8.0)
-                 .padding (m.EdgeInsets/all 8.0)
-                 .decoration (m/BoxDecoration
-                              .color m.Colors/white
-                              .border (if is-active?
-                                        (m/Border.all .color m.Colors/blue .width 1.5)
-                                        (m/Border.all .color m.Colors/transparent .width 1.5))
-                              .borderRadius (m.BorderRadius/circular 8.0)
-                              .boxShadow [(m/BoxShadow
-                                           .color (-> m.Colors/black (.withOpacity 0.1))
-                                           .blurRadius 4.0
-                                           .offset (m/Offset 2.0 2.0))])
-                 .child
-                 (m/Stack
-                  .clipBehavior m.Clip/none
-                  .children
-                  [(m/ClipRRect
-                    .borderRadius (m.BorderRadius/circular 4.0)
+           [;; Outer Stack keeps the resize handle OUTSIDE the image GestureDetector
+            ;; so pan/drag is not stolen by tap / long-press recognizers.
+            (m/SizedBox
+             .width display-width
+             .child
+             (m/Stack
+              .clipBehavior m.Clip/none
+              .children
+              [(m/Builder
+                .builder
+                (fn [^m/BuildContext img-ctx]
+                  (m/GestureDetector
+                   .behavior m.HitTestBehavior/opaque
+                   .onTapUp
+                   (fn [^m/TapUpDetails details]
+                     (try
+                       (let [box ^m/RenderBox (.findRenderObject img-ctx)
+                             local-y (.-dy (.globalToLocal box (.globalPosition details)))
+                             height (.-height (.-size box))
+                             new-offset (if (< local-y (/ height 2.0)) 0 1)]
+                         (editor-cmd/focus-block !state id new-offset))
+                       (catch Exception _ nil))
+                     nil)
+                   .onDoubleTap
+                   (fn []
+                     (when (seq url*)
+                       (-> (m/Navigator.of ctx) (.push (image-fullscreen-route url* hero-tag))))
+                     nil)
+                   .onLongPress
+                   (fn []
+                     (editor-cmd/focus-block !state id 0)
+                     (link/open-image-url-dialog! !state id)
+                     nil)
+                   .child
+                   (m/Container
+                    .width display-width
+                    .margin (m.EdgeInsets/only .bottom 8.0)
+                    .padding (m.EdgeInsets/all 8.0)
+                    .decoration (m/BoxDecoration
+                                 .color m.Colors/white
+                                 .border (if is-active?
+                                           (m/Border.all .color m.Colors/blue .width 1.5)
+                                           (m/Border.all .color m.Colors/transparent .width 1.5))
+                                 .borderRadius (m.BorderRadius/circular 8.0)
+                                 .boxShadow [(m/BoxShadow
+                                              .color (-> m.Colors/black (.withOpacity 0.1))
+                                              .blurRadius 4.0
+                                              .offset (m/Offset 2.0 2.0))])
                     .child
-                    (if (seq url*)
-                      (m/Hero
-                       .tag hero-tag
-                       .child (m/Image.network url*
-                                .fit m.BoxFit/cover
-                                .errorBuilder (fn [_ _ _]
-                                                (m/Container .height 100.0 .color m.Colors/grey
-                                                 .child (m/Center .child (m/Icon m.Icons/broken_image .color m.Colors/white))))))
-                      (m/Container .height 100.0 .color m.Colors/grey
-                       .child (m/Center .child (m/Icon m.Icons/image .color m.Colors/white)))))
+                    (m/Stack
+                     .clipBehavior m.Clip/none
+                     .children
+                     [(m/ClipRRect
+                       .borderRadius (m.BorderRadius/circular 4.0)
+                       .child
+                       (if (seq url*)
+                         (m/Hero
+                          .tag hero-tag
+                          .child (m/Image.network url*
+                                   .fit m.BoxFit/cover
+                                   .errorBuilder (fn [_ _ _]
+                                                   (m/Container .height 100.0 .color m.Colors/grey
+                                                    .child (m/Center .child (m/Icon m.Icons/broken_image .color m.Colors/white))))))
+                         (m/Container .height 100.0 .color m.Colors/grey
+                          .child (m/Center .child (m/Icon m.Icons/image .color m.Colors/white)))))
 
-                   (if is-block-selected?
-                     (m/Positioned.fill
-                      .child (m/Container
-                              .decoration (m/BoxDecoration
-                                           .color (-> m.Colors/blue (.withOpacity 0.3))
-                                           .borderRadius (m.BorderRadius/circular 4.0))))
-                     (m/SizedBox.shrink))
+                      (if is-block-selected?
+                        (m/Positioned.fill
+                         .child (m/Container
+                                 .decoration (m/BoxDecoration
+                                              .color (-> m.Colors/blue (.withOpacity 0.3))
+                                              .borderRadius (m.BorderRadius/circular 4.0))))
+                        (m/SizedBox.shrink))
 
-                   (if cursor-visible?
-                     (m/Positioned
-                      .left 0.0 .right 0.0
-                      .top (if (== offset 0) -2.0 nil)
-                      .bottom (if (== offset 1) -2.0 nil)
-                      .child (m/Container .height 2.0 .color m.Colors/blue))
-                     (m/SizedBox.shrink))
+                      (if cursor-visible?
+                        (m/Positioned
+                         .left 0.0 .right 0.0
+                         .top (if (== offset 0) -2.0 nil)
+                         .bottom (if (== offset 1) -2.0 nil)
+                         .child (m/Container .height 2.0 .color m.Colors/blue))
+                        (m/SizedBox.shrink))])))))
 
-                   ;; Corner resize handle (only when focused)
-                   (if is-active?
-                     (resize-handle !state id screen-width)
-                     (m/SizedBox.shrink))])))))
+               (if is-active?
+                 (resize-handle !state id screen-width)
+                 (m/SizedBox.shrink))]))
 
             (if (and is-active? (seq content*))
               (m/Padding
