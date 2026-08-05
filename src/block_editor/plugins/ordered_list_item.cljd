@@ -56,8 +56,9 @@
 
 (defn- render-ordered-list-read
   "Read-mode mirror of wrap-ordered-list-item.
-   Must NOT use wiki-mongol-text-flex here: Expanded inside Stack breaks layout
-   and pushes the number into its own column to the left of the body text."
+   Must NOT use wiki-mongol-text-flex or StackFit/expand: Expanded/expand
+   need a bounded Flex/Stack parent; mail_detail's horizontal ListView gives
+   infinite width, and Expanded-in-Stack also breaks number vs body layout."
   [block base-style on-link-tap !state]
   (let [clean (inline/strip-properties (or (:content block) ""))
         num (if !state (get-ordered-list-number @!state (:id block)) 1)
@@ -65,7 +66,6 @@
         col-width (if base-style (text/get-exact-column-width base-style) 18.0)
         num-left-pad (max 0.0 (/ (- col-width 14.0) 2.0))]
     (m/Stack
-     .fit m.StackFit/expand
      .alignment m.Alignment/topLeft
      .clipBehavior m.Clip/none
      .children
@@ -82,7 +82,6 @@
                                .color m.Colors/grey
                                .fontSize 12.0
                                .fontWeight m.FontWeight/bold)))])))
-
 (defn ordered-list-item-plugin
   "Ordered list item block plugin."
   []
