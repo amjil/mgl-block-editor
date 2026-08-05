@@ -28,7 +28,11 @@
          block (get-in state-val [:blocks active-id])
          block-type (:type block :paragraph)
          link-info (link/selection-link-info state-val)
-         link-active? (boolean (and link-info (not (str/blank? (:href link-info)))))]
+         image-url (when (= block-type :image)
+                     (get-in block [:data :url] ""))
+         link-active? (boolean
+                       (or (and (= block-type :image) (not (str/blank? image-url)))
+                           (and link-info (not (str/blank? (:href link-info))))))]
 
      ;; ExcludeFocus: clicking toolbar must NOT steal focus / collapse the text selection.
      (m/ExcludeFocus

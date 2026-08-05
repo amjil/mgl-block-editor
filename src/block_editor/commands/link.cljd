@@ -1,8 +1,10 @@
 (ns block-editor.commands.link
   "Inline external hyperlink: select text → attach `:link` + `:href` attrs.
+   Also edits `:image` block `:data :url` via the same overlay (`:kind :image`).
    UI is an in-editor overlay (`:link-dialog` on state)."
   (:require [clojure.string :as str]
-            [rich-editor.commands.text-commands :as text-cmd]))
+            [rich-editor.commands.text-commands :as text-cmd]
+            [rich-editor.commands.transaction :as tx]))
 
 (defn- normalize-url
   [url]
@@ -125,25 +127,50 @@
     (text-cmd/apply-style !state block-id start end :href nil)
     (swap! !state dissoc :link-selection-snapshot :link-dialog)))
 
+(defn apply-image-url!
+  "Update an image block's `:data :url`."
+  [!state block-id url]
+  (let [href (normalize-url url)]
+    (when (and block-id (not (str/blank? href)))
+      (tx/commit-transaction!
+       !state
+       (tx/make-transaction
+        :ops [(tx/update-data-op block-id {:url href})]
+        :after-selection nil))
+      (swap! !state dissoc :link-dialog))))
+
 (defn close-link-dialog!
   [!state]
   (swap! !state dissoc :link-dialog))
 
+(defn open-image-url-dialog!
+  "Open the overlay to edit an image block's `:data :url`."
+  [!state block-id]
+  (when block-id
+    (let [url (get-in @!state [:blocks block-id :data :url] "")]
+      (swap! !state assoc :link-dialog
+             {:kind :image
+              :block-id block-id
+              :href url
+              :error? false}))))
+
 (defn open-link-dialog!
-  "Open the in-editor link overlay. Always opens so the user gets feedback."
+  "Open the in-editor link overlay.
+   If the active block is `:image`, edits its URL; otherwise edits a text selection link."
   [!state]
-  (remember-selection! !state)
-  (let [info (selection-link-info @!state)]
-    (dart:core/print
-     (str "open-link-dialog! info=" info
-          " active=" (:active-block-id @!state)
-          " g-sel=" (:global-selection @!state)
-          " local-sel=" (get-in @!state [:blocks (:active-block-id @!state) :selection])))
-    (swap! !state assoc :link-dialog
-           (if info
-             (assoc info :error? false)
-             {:error? true
-              :message "Select text first, then tap Link"}))))
+  (let [active-id (:active-block-id @!state)
+        block-type (get-in @!state [:blocks active-id :type])]
+    (if (and active-id (= block-type :image))
+      (open-image-url-dialog! !state active-id)
+      (do
+        (remember-selection! !state)
+        (let [info (selection-link-info @!state)]
+          (swap! !state assoc :link-dialog
+                 (if info
+                   (assoc info :kind :text :error? false)
+                   {:kind :text
+                    :error? true
+                    :message "Select text first, then tap Link"})))))))
 
 (defn request-link-dialog!
   [!state]
