@@ -120,14 +120,14 @@
         ops (:block-ops cfg)
         !selecting? (atom false)
         !select-start (atom nil)
-        !select-rect (atom nil)
-        marquee-key (m/GlobalKey)]
+        !select-rect (atom nil)]
 
     (swap! !state assoc :editor-config cfg)
     (autocomplete/install-sniffer! !state)
 
     (f/widget
      :managed [editor-focus-node (m/FocusNode)
+               marquee-key (m/GlobalKey)
                scroll-ctrl (m/ScrollController)]
      :watch [state !state
              selecting? !selecting?
@@ -168,18 +168,19 @@
            (m/Builder
             .builder
             (fn [^m/BuildContext builder-ctx]
-              ;; Shift+drag: marquee. Otherwise requestFocus so shared-ime gets key events.
+              ;; Key fix: minimal Listener
+              ;; Only when Shift is held does it capture gestures and enable blue-box marquee selection.
+              ;; Without Shift, it acts as fully transparent glass — native TextField drag-selection works normally.
               (m/Listener
                .behavior m/HitTestBehavior.translucent
                .onPointerDown
                (fn [e]
-                 (if (.-isShiftPressed (.-instance s/HardwareKeyboard))
+                 (when (.-isShiftPressed (.-instance s/HardwareKeyboard))
                    (let [pos (.-localPosition e)]
                      (reset! !selecting? true)
                      (reset! !select-start pos)
                      (reset! !select-rect (m/Rect.fromPoints pos pos))
-                     (swap! !state assoc :selected-block-ids #{}))
-                   (.requestFocus editor-focus-node)))
+                     (swap! !state assoc :selected-block-ids #{}))))
 
                .onPointerMove
                (fn [e]
@@ -200,12 +201,7 @@
                (fn [_]
                  (reset! !selecting? false)
                  (reset! !select-start nil)
-                 (reset! !select-rect nil)
-                 (m/WidgetsBinding.instance.addPostFrameCallback
-                  (fn [_]
-                    (try
-                      (.requestFocus editor-focus-node)
-                      (catch Exception _)))))
+                 (reset! !select-rect nil))
 
                .onPointerCancel
                (fn [_]
