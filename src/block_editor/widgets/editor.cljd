@@ -13,6 +13,7 @@
             [block-editor.widgets.slash-menu :as slash-menu]
             [block-editor.widgets.autocomplete :as autocomplete]
             [block-editor.widgets.selection-bar :as selection-bar]
+            [block-editor.widgets.link-dialog :as link-dialog]
             
             [rich-editor.config :as rich-config]
             [rich-editor.commands.editor-commands :as editor-cmd]
@@ -104,7 +105,8 @@
                  [core-child
                   (marquee-rect-overlay selecting? select-rect)
                   (slash-menu/slash-overlay !state cfg)
-                  (autocomplete/autocomplete-overlay !state cfg)]
+                  (autocomplete/autocomplete-overlay !state cfg)
+                  (link-dialog/link-dialog-overlay !state)]
                  extras
                  [(selection-bar/bulk-action-bar !state)])))))
 

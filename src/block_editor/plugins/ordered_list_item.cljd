@@ -72,7 +72,8 @@
      [;; Same top reserve as edit wrapper; plain wiki text (no Expanded).
       (m/Padding
        .padding (m.EdgeInsets/only .top 24.0)
-       .child (reader/wiki-mongol-text clean base-style on-link-tap))
+       .child (reader/wiki-mongol-text clean (:content-spans block [])
+                                       base-style on-link-tap))
 
       (m/Padding
        .padding (m.EdgeInsets/only .top 4.0 .left num-left-pad)

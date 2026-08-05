@@ -13,18 +13,23 @@
   (first (filter #(= (:type %) block-type) plugins)))
 
 (defn wiki-mongol-text
-  "Tappable wiki-markup MongolText.rich (no Flex wrapper — callers choose Expanded/Flexible)."
-  [text base-style on-link-tap]
-  (mongol/MongolText.rich
-   (m/TextSpan
-    .children (highlighter/build-wiki-text-spans text base-style on-link-tap))))
+  "Tappable wiki-markup MongolText.rich (no Flex wrapper — callers choose Expanded/Flexible).
+   Optional `content-spans` enable inline external hyperlinks and basic formats."
+  ([text base-style on-link-tap]
+   (wiki-mongol-text text nil base-style on-link-tap))
+  ([text content-spans base-style on-link-tap]
+   (mongol/MongolText.rich
+    (m/TextSpan
+     .children (highlighter/build-wiki-text-spans text content-spans base-style on-link-tap)))))
 
 (defn wiki-mongol-text-flex
   "Same as wiki-mongol-text, wrapped in Expanded so Mongol text wraps within
    a height-bounded Column (avoids RenderFlex overflow in vertical script)."
-  [text base-style on-link-tap]
-  (m/Expanded
-   .child (wiki-mongol-text text base-style on-link-tap)))
+  ([text base-style on-link-tap]
+   (wiki-mongol-text-flex text nil base-style on-link-tap))
+  ([text content-spans base-style on-link-tap]
+   (m/Expanded
+    .child (wiki-mongol-text text content-spans base-style on-link-tap))))
 
 (defn- render-properties-view
   "Leading `key:: value` panel; values also support wiki markup."
@@ -69,11 +74,15 @@
             props))))))
 
 (defn- default-read-text
-  "Wiki markup + optional properties panel. Fills parent height so body text can wrap."
+  "Wiki markup + optional properties panel. Fills parent height so body text can wrap.
+   Passes `:content-spans` so external hyperlinks render in read mode."
   [block base-style on-link-tap]
   (let [raw (or (:content block) "")
+        spans (:content-spans block [])
         props (inline/parse-properties raw)
-        clean (inline/strip-properties raw)]
+        clean (inline/strip-properties raw)
+        ;; Property strip shifts offsets; only pass spans when no leading props.
+        body-spans (when (empty? props) spans)]
     (m/Column
      .mainAxisSize m.MainAxisSize/max
      .crossAxisAlignment m.CrossAxisAlignment/start
@@ -81,7 +90,7 @@
      (filterv some?
               [(when (seq props)
                  (render-properties-view props on-link-tap))
-               (wiki-mongol-text-flex clean base-style on-link-tap)]))))
+               (wiki-mongol-text-flex clean body-spans base-style on-link-tap)]))))
 
 (defn block-reader-view
   "Static block view for inactive (unfocused) blocks.

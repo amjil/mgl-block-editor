@@ -28,7 +28,16 @@
         t (if (:bold attrs) (str "<strong>" t "</strong>") t)
         t (if (:italic attrs) (str "<em>" t "</em>") t)
         t (if (:underline attrs) (str "<u>" t "</u>") t)
-        t (if (:strikethrough attrs) (str "<s>" t "</s>") t)]
+        t (if (:strikethrough attrs) (str "<s>" t "</s>") t)
+        href (:href attrs)
+        external? (and href
+                       (or (str/starts-with? href "http://")
+                           (str/starts-with? href "https://")
+                           (str/starts-with? href "mailto:")
+                           (str/starts-with? href "tel:")))
+        t (if external?
+            (str "<a href=\"" (escape-html href) "\">" t "</a>")
+            t)]
     t))
 
 (defn- attrs-at
@@ -314,13 +323,21 @@
                        (or s ""))))
 
 (defn- href->wiki-markup
-  "Turn an `<a>` into wiki/block-ref markup."
+  "Turn an `<a>` into wiki/block-ref markup, or nil for external URLs
+   that should become `:link`/`:href` content-spans."
   [href label opts]
   (let [href (or href "")
         label (or label "")
         custom (:href->wiki opts)]
     (cond
-      custom (or (custom href label) (str "[[" (if (str/blank? label) href label) "]]"))
+      (or (str/starts-with? href "http://")
+          (str/starts-with? href "https://")
+          (str/starts-with? href "mailto:")
+          (str/starts-with? href "tel:"))
+      nil
+
+      custom (or (custom href label)
+                 (str "[[" (if (str/blank? label) href label) "]]"))
       (uuid-str? href) (str "((" href "))")
       (uuid-str? label) (str "((" label "))")
       :else (str "[[" (if (str/blank? label) href label) "]]"))))
@@ -392,8 +409,18 @@
                (assoc acc :content (str content (:content inner))))
              (let [href (attr node "href")
                    inner (parse-inline nodes* opts)
-                   wiki (href->wiki-markup href (:content inner) opts)]
-               (assoc acc :content (str content wiki))))
+                   label (:content inner)
+                   wiki (href->wiki-markup href label opts)
+                   start (count content)]
+               (if wiki
+                 (assoc acc :content (str content wiki))
+                 (let [end (+ start (count label))]
+                   {:content (str content label)
+                    :content-spans (vec (concat content-spans
+                                                (shift-spans (:content-spans inner) start)
+                                                (when (and href (< start end))
+                                                  [{:start start :end end
+                                                    :attrs {:link true :href href}}])))}))))
 
            "span"
            (if (has-class? node "bookmark-desc")

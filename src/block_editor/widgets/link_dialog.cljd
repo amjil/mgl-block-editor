@@ -1,0 +1,105 @@
+(ns block-editor.widgets.link-dialog
+  "In-editor overlay for adding/editing an external hyperlink."
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]
+            [clojure.string :as str]
+            [block-editor.commands.link :as link]))
+
+(defn- error-body
+  [!state dlg]
+  (m/Column
+   .mainAxisSize m.MainAxisSize/min
+   .crossAxisAlignment m.CrossAxisAlignment/stretch
+   .children
+   [(m/Text (or (:message dlg) "Select text to add a link")
+            .style (m/TextStyle .fontSize 16.0 .color m.Colors/black87))
+    (m/SizedBox .height 16.0)
+    (m/Align
+     .alignment m.Alignment/centerRight
+     .child
+     (m/TextButton
+      .onPressed #(link/close-link-dialog! !state)
+      .child (m/Text "OK")))]))
+
+(defn- form-body
+  [!state dlg controller]
+  (m/Column
+   .mainAxisSize m.MainAxisSize/min
+   .crossAxisAlignment m.CrossAxisAlignment/stretch
+   .children
+   [(m/Text (if (str/blank? (:href dlg)) "Add link" "Edit link")
+            .style (m/TextStyle .fontSize 18.0 .fontWeight m.FontWeight/bold
+                                .color m.Colors/black87))
+    (m/SizedBox .height 12.0)
+    (m/TextField
+     .controller controller
+     .autofocus true
+     .keyboardType m.TextInputType/url
+     .decoration (m/InputDecoration
+                  .labelText "URL"
+                  .hintText "https://example.com"
+                  .border (m/OutlineInputBorder.))
+     .onSubmitted
+     (fn [value]
+       (link/apply-link! !state (:block-id dlg) (:start dlg) (:end dlg) value)))
+    (m/SizedBox .height 16.0)
+    (m/Row
+     .mainAxisAlignment m.MainAxisAlignment/end
+     .children
+     (filterv some?
+              [(when-not (str/blank? (:href dlg))
+                 (m/TextButton
+                  .onPressed
+                  (fn []
+                    (link/remove-link! !state (:block-id dlg)
+                                       (:start dlg) (:end dlg)))
+                  .child (m/Text "Remove"
+                                 .style (m/TextStyle .color m.Colors/red))))
+               (m/TextButton
+                .onPressed #(link/close-link-dialog! !state)
+                .child (m/Text "Cancel"))
+               (m/ElevatedButton
+                .onPressed
+                (fn []
+                  (link/apply-link! !state (:block-id dlg)
+                                    (:start dlg) (:end dlg)
+                                    (.-text controller)))
+                .child (m/Text "Apply"))]))]))
+
+(defn- dialog-card
+  [!state dlg controller]
+  (m/Material
+   .elevation 8.0
+   .borderRadius (m/BorderRadius.circular 12.0)
+   .color m.Colors/white
+   .child
+   (m/ConstrainedBox
+    .constraints (m/BoxConstraints .maxWidth 360.0 .minWidth 280.0)
+    .child
+    (m/Padding
+     .padding (m.EdgeInsets/all 20.0)
+     .child
+     (if (:error? dlg)
+       (error-body !state dlg)
+       (form-body !state dlg controller))))))
+
+(defn link-dialog-overlay
+  "Full-screen dimmed panel while `:link-dialog` is present on editor state."
+  [!state]
+  (f/widget
+   :watch [state !state]
+   (if-let [dlg (:link-dialog state)]
+     (f/widget
+      :key (m/ValueKey (str "link-dlg-" (:block-id dlg) "-" (:start dlg)
+                            "-" (:end dlg) "-" (:error? dlg)))
+      :managed [controller (m/TextEditingController .text (or (:href dlg) ""))]
+      (m/Positioned
+       .left 0.0 .top 0.0 .right 0.0 .bottom 0.0
+       .child
+       (m/Material
+        .color (-> m.Colors/black (.withOpacity 0.45))
+        .child
+        (m/Center
+         .child
+         (dialog-card !state dlg controller)))))
+     (m/SizedBox.shrink))))

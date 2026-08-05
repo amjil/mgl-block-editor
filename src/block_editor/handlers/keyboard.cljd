@@ -10,6 +10,7 @@
             [rich-editor.commands.editor-commands :as editor-cmd]
             [rich-editor.commands.text-commands :as text-cmd]
             [rich-editor.services.clipboard-service :as clipboard]
+            [block-editor.commands.link :as link]
             [shared-ime.controller :as ime-ctrl]))
 
 ;; =============================================================================
@@ -141,6 +142,10 @@
           (do (clipboard/paste! !state) m.KeyEventResult/handled)
           (and is-down? is-ctrl? (= logical-key s.LogicalKeyboardKey/keyX))
           (do (clipboard/cut! !state editor-cmd/delete-global-selection!) m.KeyEventResult/handled)
+
+          ;; [Cmd/Ctrl + K]: Add / edit external hyperlink
+          (and is-down? is-ctrl? (= logical-key s.LogicalKeyboardKey/keyK))
+          (do (link/request-link-dialog! !state) m.KeyEventResult/handled)
 
           ;; ==========================================
           ;; 🌟 Fast cursor navigation logic (Home / End family)

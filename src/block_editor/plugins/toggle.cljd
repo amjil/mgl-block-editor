@@ -57,7 +57,8 @@
      .children
      [(m/Container
        .padding (m.EdgeInsets/only .top 28.0)
-       .child (reader/wiki-mongol-text-flex clean base-style on-link-tap))
+       .child (reader/wiki-mongol-text-flex clean (:content-spans block [])
+                                            base-style on-link-tap))
 
       (m/GestureDetector
        .behavior m.HitTestBehavior/opaque

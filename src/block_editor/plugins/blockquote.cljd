@@ -25,7 +25,8 @@
       .mainAxisSize m.MainAxisSize/max
       .crossAxisAlignment m.CrossAxisAlignment/start
       .children
-      [(reader/wiki-mongol-text-flex clean base-style on-link-tap)]))))
+      [(reader/wiki-mongol-text-flex clean (:content-spans block [])
+                                     base-style on-link-tap)]))))
 
 (defn blockquote-plugin
   "Blockquote text block. Edit uses :text-block-wrapper around block-node."

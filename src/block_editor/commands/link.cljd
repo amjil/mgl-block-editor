@@ -1,0 +1,150 @@
+(ns block-editor.commands.link
+  "Inline external hyperlink: select text → attach `:link` + `:href` attrs.
+   UI is an in-editor overlay (`:link-dialog` on state)."
+  (:require [clojure.string :as str]
+            [rich-editor.commands.text-commands :as text-cmd]))
+
+(defn- normalize-url
+  [url]
+  (let [u (str/trim (or url ""))]
+    (cond
+      (str/blank? u) ""
+      (or (str/starts-with? u "http://")
+          (str/starts-with? u "https://")
+          (str/starts-with? u "mailto:")
+          (str/starts-with? u "tel:"))
+      u
+      :else (str "https://" u))))
+
+(defn- formats-covering
+  [spans off]
+  (reduce (fn [acc {:keys [start end attrs]}]
+            (if (and (<= start off) (> end off))
+              (merge acc attrs)
+              acc))
+          {}
+          spans))
+
+(defn- link-span-bounds
+  [spans offset]
+  (some (fn [{:keys [start end attrs]}]
+          (when (and (<= start offset) (> end offset)
+                     (or (:link attrs) (:href attrs)))
+            [start end]))
+        spans))
+
+(defn- sel-offsets
+  "Read [base extent] from a TextSelection-like value."
+  [sel]
+  (when sel
+    (try
+      (let [base (.-baseOffset sel)
+            extent (.-extentOffset sel)]
+        (when (and (number? base) (number? extent))
+          [base extent]))
+      (catch Exception _
+        (try
+          (let [a (.-start sel)
+                b (.-end sel)]
+            (when (and (number? a) (number? b))
+              [a b]))
+          (catch Exception _ nil))))))
+
+(defn- info-from-range
+  [block-id start end spans]
+  (when (and block-id (number? start) (number? end) (< start end))
+    {:block-id block-id
+     :start start
+     :end end
+     :href (or (:href (formats-covering (or spans []) start)) "")}))
+
+(defn- from-local-selection
+  [state]
+  (let [active-id (:active-block-id state)
+        block (when active-id (get-in state [:blocks active-id]))
+        sel (when block (:selection block))
+        spans (when block (:content-spans block []))]
+    (when (and active-id sel)
+      (when-let [[base extent] (sel-offsets sel)]
+        (if (= base extent)
+          (when-let [[s e] (link-span-bounds spans base)]
+            (info-from-range active-id s e spans))
+          (info-from-range active-id (min base extent) (max base extent) spans))))))
+
+(defn- from-global-selection
+  "Long-press / drag selection lives on `:global-selection`, not `:selection`."
+  [state]
+  (try
+    (when-let [g-sel (:global-selection state)]
+      (let [start (:start g-sel)
+            end (:end g-sel)
+            sid (:id start)
+            eid (:id end)
+            soff (:offset start)
+            eoff (:offset end)]
+        (when (and sid eid (= sid eid)
+                   (number? soff) (number? eoff)
+                   (not= soff eoff)
+                   (get-in state [:blocks sid]))
+          (info-from-range sid (min soff eoff) (max soff eoff)
+                           (get-in state [:blocks sid :content-spans] [])))))
+    (catch Exception _ nil)))
+
+(defn selection-link-info
+  "Return `{:block-id :start :end :href}` or nil.
+   Checks live local sel, global sel, then `:link-selection-snapshot`."
+  [state]
+  (or (from-local-selection state)
+      (from-global-selection state)
+      (let [snapshot (:link-selection-snapshot state)]
+        (when (and snapshot (:block-id snapshot)
+                   (number? (:start snapshot)) (number? (:end snapshot))
+                   (< (:start snapshot) (:end snapshot)))
+          snapshot))))
+
+(defn remember-selection!
+  "Cache current non-collapsed selection (local or global)."
+  [!state]
+  (when-let [info (or (from-local-selection @!state)
+                      (from-global-selection @!state))]
+    (swap! !state assoc :link-selection-snapshot info)
+    info))
+
+(defn apply-link!
+  [!state block-id start end url]
+  (let [href (normalize-url url)]
+    (when (and block-id (< start end) (not (str/blank? href)))
+      (text-cmd/apply-style !state block-id start end :link true)
+      (text-cmd/apply-style !state block-id start end :href href)
+      (swap! !state dissoc :link-selection-snapshot :link-dialog :global-selection))))
+
+(defn remove-link!
+  [!state block-id start end]
+  (when (and block-id (< start end))
+    (text-cmd/apply-style !state block-id start end :link nil)
+    (text-cmd/apply-style !state block-id start end :href nil)
+    (swap! !state dissoc :link-selection-snapshot :link-dialog)))
+
+(defn close-link-dialog!
+  [!state]
+  (swap! !state dissoc :link-dialog))
+
+(defn open-link-dialog!
+  "Open the in-editor link overlay. Always opens so the user gets feedback."
+  [!state]
+  (remember-selection! !state)
+  (let [info (selection-link-info @!state)]
+    (dart:core/print
+     (str "open-link-dialog! info=" info
+          " active=" (:active-block-id @!state)
+          " g-sel=" (:global-selection @!state)
+          " local-sel=" (get-in @!state [:blocks (:active-block-id @!state) :selection])))
+    (swap! !state assoc :link-dialog
+           (if info
+             (assoc info :error? false)
+             {:error? true
+              :message "Select text first, then tap Link"}))))
+
+(defn request-link-dialog!
+  [!state]
+  (open-link-dialog! !state))

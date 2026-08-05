@@ -5,6 +5,7 @@
   (:require [rich-editor.config :as rich-config]
             [rich-editor.defaults :as defaults]
             [block-editor.commands.ops :as ops]
+            [block-editor.commands.link :as link]
             [block-editor.plugins.core :as plugins]))
 
 (defn- merge-plugins
@@ -72,4 +73,7 @@
            :text-block-wrappers wrappers
            :block-plugins plugin-list
            :on-link-tap (:on-link-tap user-config)
-           :link-suggestions (:link-suggestions user-config))))
+           :link-suggestions (:link-suggestions user-config)
+           ;; Ctrl/Cmd+K → toolbar opens dialog via :pending-ui
+           :commands (assoc (:commands base-merged)
+                            :link (fn [!state] (link/request-link-dialog! !state))))))

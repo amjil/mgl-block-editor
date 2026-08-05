@@ -3,6 +3,7 @@
   (:require ["package:flutter/material.dart" :as m]
             ["package:flutter/foundation.dart" :as foundation :refer [kIsWeb]]
             ["package:shared_preferences/shared_preferences.dart" :as prefs] ;; Local storage
+            ["package:url_launcher/url_launcher.dart" :as url-launcher]
             ["dart:async" :as async]
             [cljd.flutter :as f]
             
@@ -68,7 +69,13 @@
 (def my-editor-config
   {:text-block-types #{:paragraph :heading-1 :heading-2 :heading-3 
                        :blockquote :list-item :ordered-list-item :task :callout :toggle}
-   :on-link-tap (fn [target] (println "link tap:" target))
+   :on-link-tap (fn [target]
+                  (println "link tap:" target)
+                  (when (and (map? target) (= (:type target) :external) (:url target))
+                    (url-launcher/launchUrl
+                     (dart:core/Uri.parse (:url target))
+                     .mode url-launcher/LaunchMode.externalApplication))
+                  nil)
    :link-suggestions demo-link-suggestions
 
    :block-style (fn [b-type]

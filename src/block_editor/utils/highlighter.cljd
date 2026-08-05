@@ -37,9 +37,42 @@
                                             {:bidi-link true :color "#1E90FF"}))]
             (recur (rest ms) end-idx ops)))))))
 
-(defn build-wiki-text-spans
-  "Parse wiki markup into tappable TextSpans for MongolText.rich.
-   `on-link-tap` receives a page/tag string, or `{:type :block :id uuid}`."
+(defn- text+spans->segments
+  "Absolute content-spans → continuous non-overlapping {:text :attrs} segments."
+  [text spans]
+  (let [len (count text)
+        char-attrs (reduce (fn [acc {:keys [start end attrs]}]
+                             (reduce (fn [a i]
+                                       (if (and (>= i 0) (< i len))
+                                         (update a i merge attrs)
+                                         a))
+                                     acc
+                                     (range start end)))
+                           (vec (repeat len {}))
+                           (or spans []))]
+    (if (empty? text)
+      []
+      (->> (map vector text char-attrs)
+           (partition-by second)
+           (map (fn [group]
+                  {:text (apply str (map first group))
+                   :attrs (second (first group))}))))))
+
+(defn- external-link-span
+  [text href base-style on-link-tap]
+  (m/TextSpan
+   .text text
+   .style (.copyWith ^m/TextStyle base-style
+                     .color (m/Color 0xFF64B5F6)
+                     .decoration m.TextDecoration/underline)
+   .recognizer (when (and on-link-tap href)
+                 (let [r (gestures/TapGestureRecognizer.)]
+                   (set! (.-onTap r)
+                         #(on-link-tap {:type :external :url href}))
+                   r))))
+
+(defn- wiki-token-spans
+  "Wiki-only TextSpans (no content-spans)."
   [raw-text base-style on-link-tap]
   (let [tokens (inline/parse-text-spans (or raw-text ""))]
     (if (empty? tokens)
@@ -78,7 +111,7 @@
             .text (str "⚓ " (apply str (take 8 content)) "…")
             .style (.copyWith ^m/TextStyle base-style
                               .color (m/Color 0xFFB0BEC5)
-                              .fontSize (max 10.0 (- (or (.-fontSize base-style) 16.0) 2.0))
+                              .fontSize (max 10.0 (- (or (.-fontSize ^m/TextStyle base-style) 16.0) 2.0))
                               .backgroundColor (m/Color 0xFF263238)
                               .decoration m.TextDecoration/underline
                               .decorationStyle m.TextDecorationStyle/dashed)
@@ -89,3 +122,47 @@
 
            (m/TextSpan .text (str content) .style base-style)))
        tokens))))
+
+(defn- apply-basic-attrs
+  "Apply bold/italic/underline from content-span attrs onto a TextStyle."
+  [^m/TextStyle base-style attrs]
+  (let [s (if (:bold attrs)
+            (.copyWith base-style .fontWeight m.FontWeight/bold)
+            base-style)
+        s (if (:italic attrs)
+            (.copyWith s .fontStyle m.FontStyle/italic)
+            s)
+        s (if (:underline attrs)
+            (.copyWith s .decoration m.TextDecoration/underline)
+            s)]
+    s))
+
+(defn build-wiki-text-spans
+  "Parse wiki markup into tappable TextSpans for MongolText.rich.
+   Optional `content-spans` render `:href`/`:link` as external hyperlinks.
+   `on-link-tap` receives a page/tag string, `{:type :block :id uuid}`,
+   or `{:type :external :url ...}`."
+  ([raw-text base-style on-link-tap]
+   (build-wiki-text-spans raw-text nil base-style on-link-tap))
+  ([raw-text content-spans base-style on-link-tap]
+   (let [text (or raw-text "")
+         spans (or content-spans [])]
+     (cond
+       (empty? text)
+       [(m/TextSpan .text "" .style base-style)]
+
+       (empty? spans)
+       (wiki-token-spans text base-style on-link-tap)
+
+       :else
+       (vec
+        (mapcat
+         (fn [{:keys [text attrs]}]
+           (let [href (:href attrs)
+                 is-link? (or (:link attrs) href)]
+             (if is-link?
+               [(external-link-span text href base-style on-link-tap)]
+               (wiki-token-spans text
+                                 (apply-basic-attrs base-style attrs)
+                                 on-link-tap))))
+         (text+spans->segments text spans)))))))
