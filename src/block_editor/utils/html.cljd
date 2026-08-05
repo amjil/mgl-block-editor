@@ -1,0 +1,297 @@
+(ns block-editor.utils.html
+  "Export editor document state to an HTML fragment.
+   Skips `:image` blocks. Wiki `[[links]]` become `<a>` tags; `#tags` left as plain text."
+  (:require [clojure.string :as str]
+            [block-editor.utils.inline :as inline]))
+
+;; =============================================================================
+;; HTML escaping & inline rich text
+;; =============================================================================
+
+(defn- escape-html
+  "Escape characters that are significant in HTML text/attributes."
+  [s]
+  (-> (or s "")
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")
+      (str/replace "\"" "&quot;")))
+
+(defn- wrap-attrs-html
+  "Wrap escaped text with inline format tags from span attrs."
+  [escaped attrs]
+  (let [t escaped
+        t (if (:bold attrs) (str "<strong>" t "</strong>") t)
+        t (if (:italic attrs) (str "<em>" t "</em>") t)
+        t (if (:underline attrs) (str "<u>" t "</u>") t)
+        t (if (:strikethrough attrs) (str "<s>" t "</s>") t)]
+    t))
+
+(defn- attrs-at
+  "Merge all content-span attrs covering absolute index `i`."
+  [spans i]
+  (reduce (fn [acc {:keys [start end attrs]}]
+            (if (and (<= start i) (< i end))
+              (merge acc attrs)
+              acc))
+          {}
+          spans))
+
+(defn- emit-styled-range
+  "Emit HTML for `text` substring [from, to) applying content-spans."
+  [text spans from to]
+  (if (>= from to)
+    ""
+    (loop [i from
+           acc []]
+      (if (>= i to)
+        (apply str acc)
+        (let [attrs (attrs-at spans i)
+              j (loop [k (inc i)]
+                  (if (and (< k to) (= (attrs-at spans k) attrs))
+                    (recur (inc k))
+                    k))
+              chunk (-> (subs text i j)
+                        escape-html
+                        (str/replace "\n" "<br>"))]
+          (recur j (conj acc (wrap-attrs-html chunk attrs))))))))
+
+(defn- default-link-href
+  "Default wiki / block-ref href: the raw target string."
+  [target]
+  (or target ""))
+
+(defn inline->html
+  "Convert block `:content` + `:content-spans` to an HTML inline fragment.
+   - `[[Page]]` → `<a href=\"…\">Page</a>`
+   - `#tag` left as plain text (escaped)
+   - `((uuid))` → `<a href=\"…\">uuid</a>`
+   Opts:
+   - `:link-href` `(fn [target] -> href string)` for wiki links
+   - `:block-href` `(fn [uuid] -> href string)` for block refs (defaults to `:link-href`)"
+  ([content] (inline->html content [] nil))
+  ([content spans] (inline->html content spans nil))
+  ([content spans opts]
+   (let [text (or content "")
+         spans (or spans [])
+         link-href (or (:link-href opts) default-link-href)
+         block-href (or (:block-href opts) link-href)
+         tokens (inline/parse-text-spans text)]
+     (if (and (empty? spans)
+              (= 1 (count tokens))
+              (= :text (:type (first tokens))))
+       (-> text escape-html (str/replace "\n" "<br>"))
+       (loop [tokens tokens
+              offset 0
+              acc []]
+         (if (empty? tokens)
+           (apply str acc)
+           (let [{:keys [type content]} (first tokens)]
+             (case type
+               :text
+               (let [len (count content)
+                     html (emit-styled-range text spans offset (+ offset len))]
+                 (recur (rest tokens) (+ offset len) (conj acc html)))
+
+               :link
+               (let [raw (str "[[" content "]]")
+                     href (escape-html (link-href content))
+                     label (escape-html content)]
+                 (recur (rest tokens) (+ offset (count raw))
+                        (conj acc (str "<a href=\"" href "\">" label "</a>"))))
+
+               :tag
+               (let [raw (str "#" content)]
+                 (recur (rest tokens) (+ offset (count raw))
+                        (conj acc (escape-html raw))))
+
+               :block-ref
+               (let [raw (str "((" content "))")
+                     href (escape-html (block-href content))
+                     label (escape-html content)]
+                 (recur (rest tokens) (+ offset (count raw))
+                        (conj acc (str "<a href=\"" href "\">" label "</a>"))))
+
+               (let [len (count (str content))]
+                 (recur (rest tokens) (+ offset len)
+                        (conj acc (escape-html (str content)))))))))))))
+
+;; =============================================================================
+;; Block → HTML
+;; =============================================================================
+
+(declare render-siblings-html)
+
+(defn- block-inner-html
+  "Inline HTML from block `:content` + `:content-spans` (full text, offsets preserved)."
+  [block opts]
+  (inline->html (or (:content block) "") (:content-spans block []) opts))
+
+(defn- nest-children
+  "Place children after the block element (valid HTML nesting)."
+  [html blocks child-ids opts]
+  (let [kids (render-siblings-html blocks child-ids opts)]
+    (if (str/blank? kids)
+      html
+      (str html "<div class=\"children\">" kids "</div>"))))
+
+(defn- nest-children-inside
+  "Place children inside a container (e.g. `<li>…</li>`, `<details>`)."
+  [open inner close blocks child-ids opts]
+  (let [kids (render-siblings-html blocks child-ids opts)]
+    (str open inner kids close)))
+
+(defn- task-checked?
+  [block]
+  (boolean (or (get-in block [:data :checked])
+               (get-in block [:attributes :checked?] false))))
+
+(defn- render-one-block
+  "HTML for a single block (not list-grouped). Returns empty string for `:image`."
+  [blocks block opts]
+  (let [b-type (:type block :paragraph)
+        child-ids (:children block [])
+        inner (block-inner-html block opts)]
+    (case b-type
+      :image
+      ""
+
+      :heading-1
+      (nest-children (str "<h1>" inner "</h1>") blocks child-ids opts)
+
+      :heading-2
+      (nest-children (str "<h2>" inner "</h2>") blocks child-ids opts)
+
+      :heading-3
+      (nest-children (str "<h3>" inner "</h3>") blocks child-ids opts)
+
+      :blockquote
+      (nest-children (str "<blockquote>" inner "</blockquote>") blocks child-ids opts)
+
+      :divider
+      "<hr>"
+
+      :task
+      (let [checked? (task-checked? block)
+            box (str "<input type=\"checkbox\" disabled"
+                     (when checked? " checked")
+                     "> ")]
+        (nest-children (str "<div class=\"task\">" box inner "</div>")
+                       blocks child-ids opts))
+
+      :callout
+      (let [icon (escape-html (get-in block [:data :icon] "💡"))]
+        (nest-children (str "<aside class=\"callout\" data-icon=\"" icon "\">"
+                            inner "</aside>")
+                       blocks child-ids opts))
+
+      :toggle
+      (let [summary (if (str/blank? inner) "&nbsp;" inner)]
+        (nest-children-inside
+         (str "<details><summary>" summary "</summary>")
+         ""
+         "</details>"
+         blocks child-ids opts))
+
+      :bookmark
+      (let [url (get-in block [:data :url] "")
+            title (or (not-empty (get-in block [:data :title] ""))
+                      (not-empty url)
+                      "Bookmark")
+            desc (get-in block [:data :desc] "")]
+        (if (str/blank? url)
+          ""
+          (str "<a class=\"bookmark\" href=\"" (escape-html url) "\">"
+               (escape-html title)
+               (when (seq desc)
+                 (str "<span class=\"bookmark-desc\">"
+                      (escape-html desc)
+                      "</span>"))
+               "</a>")))
+
+      :code-block
+      (str "<pre><code>" (escape-html (or (:content block) "")) "</code></pre>")
+
+      :list-item
+      (nest-children-inside "<li>" inner "</li>" blocks child-ids opts)
+
+      :ordered-list-item
+      (nest-children-inside "<li>" inner "</li>" blocks child-ids opts)
+
+      :paragraph
+      (nest-children (str "<p>" inner "</p>") blocks child-ids opts)
+
+      (nest-children
+       (str "<div class=\"block block-" (escape-html (name b-type)) "\">"
+            inner "</div>")
+       blocks child-ids opts))))
+
+(defn- list-tag
+  [list-type]
+  (if (= list-type :ol) "ol" "ul"))
+
+(defn- sibling-list-type
+  "Return `:ul`, `:ol`, or nil for non-list blocks."
+  [block]
+  (case (:type block)
+    :list-item :ul
+    :ordered-list-item :ol
+    nil))
+
+(defn- render-siblings-html
+  "Render sibling ids, grouping consecutive list items into ul/ol."
+  [blocks ids opts]
+  (loop [ids (vec ids)
+         acc []]
+    (if (empty? ids)
+      (apply str acc)
+      (let [id (first ids)
+            block (get blocks id)]
+        (if-not block
+          (recur (rest ids) acc)
+          (if-let [lt (sibling-list-type block)]
+            (let [[group rest-ids]
+                  (loop [remaining ids
+                         group []]
+                    (if (empty? remaining)
+                      [group remaining]
+                      (let [b (get blocks (first remaining))]
+                        (if (= lt (sibling-list-type b))
+                          (recur (rest remaining) (conj group (first remaining)))
+                          [group remaining]))))
+                  items (apply str
+                               (map (fn [gid]
+                                      (render-one-block blocks (get blocks gid) opts))
+                                    group))
+                  tag (list-tag lt)
+                  html (str "<" tag ">" items "</" tag ">")]
+              (recur rest-ids (conj acc html)))
+            (let [html (render-one-block blocks block opts)]
+              (recur (rest ids) (conj acc html)))))))))
+
+;; =============================================================================
+;; Public API
+;; =============================================================================
+
+(defn export-to-html
+  "Export editor `state` (`:root` + `:blocks`) to an HTML fragment string.
+   Skips `:image` blocks. Does not emit a full HTML document.
+
+   Opts:
+   - `:link-href`  `(fn [page-name] -> href)` for `[[wikilinks]]`
+   - `:block-href` `(fn [uuid] -> href)` for `((block-refs))`"
+  ([state] (export-to-html state nil))
+  ([state opts]
+   (let [root (or (:root state) [])
+         blocks (or (:blocks state) {})]
+     (render-siblings-html blocks root opts))))
+
+(defn block->html
+  "Export a single block (and its descendants) to an HTML fragment."
+  ([state block-id] (block->html state block-id nil))
+  ([state block-id opts]
+   (let [blocks (or (:blocks state) {})
+         block (get blocks block-id)]
+     (if block
+       (render-one-block blocks block opts)
+       ""))))

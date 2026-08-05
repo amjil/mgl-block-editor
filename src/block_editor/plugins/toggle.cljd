@@ -8,65 +8,73 @@
             [block-editor.utils.collapse :as collapse]))
 
 (defn wrap-toggle
-  "Wraps the editable text widget with a toggleable arrow icon above the FIRST column."
+  "Wraps the editable text widget with a toggleable arrow icon above the FIRST column.
+   Uses Padding (not Positioned) like task/list-item so the hit target wins over the
+   outer text-selection GestureDetector."
   [text-widget id !state _root-index block style _cfg]
   (let [collapsed? (:collapsed? block false)
         has-children? (seq (:children block []))
         col-width (if style (text/get-exact-column-width style) 18.0)
         icon-left-pad (max 0.0 (/ (- col-width 24.0) 2.0))]
     (m/Stack
+     .alignment m.Alignment/topLeft
      .clipBehavior m/Clip.none
      .children
      [;; 1. Core input area: reserve 28px top padding for the arrow icon
       (m/Container
-       .padding (m/EdgeInsets.only .top 28.0)
+       .padding (m.EdgeInsets/only .top 28.0)
        .child text-widget)
-      
-      ;; 2. Absolutely positioned arrow: hit area strictly limited to the icon
-      (m/Positioned
-       .left icon-left-pad
-       .top 2.0
+
+      ;; 2. Arrow above first column — Padding hit target (same pattern as wrap-task)
+      (m/GestureDetector
+       .behavior m.HitTestBehavior/opaque
+       .onTap (fn []
+                (when has-children?
+                  (collapse/toggle-collapse! !state id))
+                nil)
        .child
-       (m/GestureDetector
-        .behavior m/HitTestBehavior.opaque
-        .onTap #(collapse/toggle-collapse! !state id)
+       (m/Padding
+        .padding (m.EdgeInsets/only .left icon-left-pad .top 2.0)
         .child
         (m/RotatedBox
          .quarterTurns 1 ;; Rotate 90°: collapsed → (↓), expanded → (→) toward children
          .child
-         (m/Icon (if collapsed? m/Icons.arrow_right m/Icons.arrow_drop_up)
+         (m/Icon (if collapsed? m.Icons/arrow_right m.Icons/arrow_drop_down)
                  .size 24.0
-                 ;; Grayscale color: works on light/dark backgrounds without overpowering text
-                 .color (if has-children? m/Colors.grey.shade300 m/Colors.grey.shade700)))))])))
+                 ;; Visible on both light and dark editor backgrounds
+                 .color (if has-children? m.Colors/black54 m.Colors/black26)))))])))
 
 (defn- render-toggle-read
   [block base-style on-link-tap !state]
   (let [collapsed? (:collapsed? block false)
+        has-children? (seq (:children block []))
         clean (inline/strip-properties (or (:content block) ""))
         col-width (if base-style (text/get-exact-column-width base-style) 18.0)
         icon-left-pad (max 0.0 (/ (- col-width 24.0) 2.0))]
     (m/Stack
+     .alignment m.Alignment/topLeft
      .clipBehavior m/Clip.none
      .children
      [(m/Container
-       .padding (m/EdgeInsets.only .top 28.0)
+       .padding (m.EdgeInsets/only .top 28.0)
        .child (reader/wiki-mongol-text-flex clean base-style on-link-tap))
-      
-      (m/Positioned
-       .left icon-left-pad
-       .top 2.0
+
+      (m/GestureDetector
+       .behavior m.HitTestBehavior/opaque
+       .onTap (fn []
+                (when has-children?
+                  (collapse/toggle-collapse! !state (:id block)))
+                nil)
        .child
-       (m/GestureDetector
-        .behavior m/HitTestBehavior.opaque
-        .onTap #(collapse/toggle-collapse! !state (:id block))
+       (m/Padding
+        .padding (m.EdgeInsets/only .left icon-left-pad .top 2.0)
         .child
         (m/RotatedBox
          .quarterTurns 1
          .child
-         (m/Icon (if collapsed? m/Icons.arrow_right m/Icons.arrow_drop_up)
+         (m/Icon (if collapsed? m.Icons/arrow_right m.Icons/arrow_drop_down)
                  .size 24.0
-                 ;; Grayscale color: match edit-mode appearance
-                 .color m/Colors.grey))))])))
+                 .color (if has-children? m.Colors/black54 m.Colors/black26)))))])))
 
 (defn toggle-plugin
   "Toggle list block."
