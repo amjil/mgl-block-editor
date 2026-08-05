@@ -1,11 +1,15 @@
 (ns block-editor.utils.html
-  "Export editor document state to an HTML fragment.
-   Skips `:image` blocks. Wiki `[[links]]` become `<a>` tags; `#tags` left as plain text."
-  (:require [clojure.string :as str]
-            [block-editor.utils.inline :as inline]))
+  "Bidirectional HTML fragment ↔ editor state.
+   Export skips `:image`. Wiki `[[links]]` ↔ `<a>`; `#tags` left as plain text.
+   Host apps need the Dart `html` package (see example/pubspec.yaml)."
+  (:require ["package:html/parser.dart" :as html-parser]
+            ["package:html/dom.dart" :as html-dom]
+            [clojure.string :as str]
+            [block-editor.utils.inline :as inline]
+            [block-editor.utils.persistence :as persistence]))
 
 ;; =============================================================================
-;; HTML escaping & inline rich text
+;; HTML escaping & inline rich text (export)
 ;; =============================================================================
 
 (defn- escape-html
@@ -63,12 +67,7 @@
 
 (defn inline->html
   "Convert block `:content` + `:content-spans` to an HTML inline fragment.
-   - `[[Page]]` → `<a href=\"…\">Page</a>`
-   - `#tag` left as plain text (escaped)
-   - `((uuid))` → `<a href=\"…\">uuid</a>`
-   Opts:
-   - `:link-href` `(fn [target] -> href string)` for wiki links
-   - `:block-href` `(fn [uuid] -> href string)` for block refs (defaults to `:link-href`)"
+   Opts: `:link-href`, `:block-href`."
   ([content] (inline->html content [] nil))
   ([content spans] (inline->html content spans nil))
   ([content spans opts]
@@ -117,18 +116,16 @@
                         (conj acc (escape-html (str content)))))))))))))
 
 ;; =============================================================================
-;; Block → HTML
+;; Block → HTML (export)
 ;; =============================================================================
 
 (declare render-siblings-html)
 
 (defn- block-inner-html
-  "Inline HTML from block `:content` + `:content-spans` (full text, offsets preserved)."
   [block opts]
   (inline->html (or (:content block) "") (:content-spans block []) opts))
 
 (defn- nest-children
-  "Place children after the block element (valid HTML nesting)."
   [html blocks child-ids opts]
   (let [kids (render-siblings-html blocks child-ids opts)]
     (if (str/blank? kids)
@@ -136,7 +133,6 @@
       (str html "<div class=\"children\">" kids "</div>"))))
 
 (defn- nest-children-inside
-  "Place children inside a container (e.g. `<li>…</li>`, `<details>`)."
   [open inner close blocks child-ids opts]
   (let [kids (render-siblings-html blocks child-ids opts)]
     (str open inner kids close)))
@@ -147,7 +143,6 @@
                (get-in block [:attributes :checked?] false))))
 
 (defn- render-one-block
-  "HTML for a single block (not list-grouped). Returns empty string for `:image`."
   [blocks block opts]
   (let [b-type (:type block :paragraph)
         child-ids (:children block [])
@@ -231,7 +226,6 @@
   (if (= list-type :ol) "ol" "ul"))
 
 (defn- sibling-list-type
-  "Return `:ul`, `:ol`, or nil for non-list blocks."
   [block]
   (case (:type block)
     :list-item :ul
@@ -239,7 +233,6 @@
     nil))
 
 (defn- render-siblings-html
-  "Render sibling ids, grouping consecutive list items into ul/ol."
   [blocks ids opts]
   (loop [ids (vec ids)
          acc []]
@@ -270,6 +263,425 @@
               (recur (rest ids) (conj acc html)))))))))
 
 ;; =============================================================================
+;; HTML → editor (import)
+;; =============================================================================
+
+(def ^:private block-level-tags
+  #{"p" "h1" "h2" "h3" "h4" "h5" "h6" "blockquote" "ul" "ol" "li"
+    "div" "aside" "details" "pre" "hr" "table" "section" "article"
+    "header" "footer" "nav" "main"})
+
+(defn- new-block-id []
+  (str "b-" (random-uuid)))
+
+(defn- el? [node]
+  (dart/is? node html-dom/Element))
+
+(defn- text-node? [node]
+  (dart/is? node html-dom/Text))
+
+(defn- tag-name [^html-dom/Element el]
+  (str/lower-case (or (.-localName el) "")))
+
+(defn- attr [^html-dom/Element el k]
+  (or (get (.-attributes el) k) ""))
+
+(defn- has-class? [^html-dom/Element el class]
+  (let [cls (or (.-className el) "")]
+    (boolean (some #(= % class) (str/split cls #"\s+")))))
+
+(defn- blank-text-node? [node]
+  (and (text-node? node) (str/blank? (.-data ^html-dom/Text node))))
+
+(defn- block-level-el? [node]
+  (and (el? node) (contains? block-level-tags (tag-name node))))
+
+(defn- child-nodes [node]
+  (vec (.-nodes node)))
+
+(defn- element-children [^html-dom/Element el]
+  (filterv el? (child-nodes el)))
+
+(defn- shift-spans [spans offset]
+  (mapv (fn [s]
+          (-> s
+              (update :start + offset)
+              (update :end + offset)))
+        spans))
+
+(defn- uuid-str? [s]
+  (boolean (re-matches #"[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}"
+                       (or s ""))))
+
+(defn- href->wiki-markup
+  "Turn an `<a>` into wiki/block-ref markup."
+  [href label opts]
+  (let [href (or href "")
+        label (or label "")
+        custom (:href->wiki opts)]
+    (cond
+      custom (or (custom href label) (str "[[" (if (str/blank? label) href label) "]]"))
+      (uuid-str? href) (str "((" href "))")
+      (uuid-str? label) (str "((" label "))")
+      :else (str "[[" (if (str/blank? label) href label) "]]"))))
+
+(defn- parse-inline
+  "Walk inline nodes → `{:content :content-spans}`."
+  [nodes opts]
+  (reduce
+   (fn [{:keys [content content-spans] :as acc} node]
+     (cond
+       (text-node? node)
+       (let [t (str/replace (or (.-data ^html-dom/Text node) "") "\u00a0" " ")]
+         (assoc acc :content (str content t)))
+
+       (el? node)
+       (let [tag (tag-name node)
+             nodes* (child-nodes node)]
+         (case tag
+           "br"
+           (assoc acc :content (str content "\n"))
+
+           "input"
+           acc
+
+           ("strong" "b")
+           (let [inner (parse-inline nodes* opts)
+                 start (count content)
+                 end (+ start (count (:content inner)))]
+             {:content (str content (:content inner))
+              :content-spans (vec (concat content-spans
+                                          (shift-spans (:content-spans inner) start)
+                                          (when (< start end)
+                                            [{:start start :end end :attrs {:bold true}}])))})
+
+           ("em" "i")
+           (let [inner (parse-inline nodes* opts)
+                 start (count content)
+                 end (+ start (count (:content inner)))]
+             {:content (str content (:content inner))
+              :content-spans (vec (concat content-spans
+                                          (shift-spans (:content-spans inner) start)
+                                          (when (< start end)
+                                            [{:start start :end end :attrs {:italic true}}])))})
+
+           "u"
+           (let [inner (parse-inline nodes* opts)
+                 start (count content)
+                 end (+ start (count (:content inner)))]
+             {:content (str content (:content inner))
+              :content-spans (vec (concat content-spans
+                                          (shift-spans (:content-spans inner) start)
+                                          (when (< start end)
+                                            [{:start start :end end :attrs {:underline true}}])))})
+
+           ("s" "del" "strike")
+           (let [inner (parse-inline nodes* opts)
+                 start (count content)
+                 end (+ start (count (:content inner)))]
+             {:content (str content (:content inner))
+              :content-spans (vec (concat content-spans
+                                          (shift-spans (:content-spans inner) start)
+                                          (when (< start end)
+                                            [{:start start :end end :attrs {:strikethrough true}}])))})
+
+           "a"
+           (if (has-class? node "bookmark")
+             ;; Bookmark is block-level; if nested inline, take text only
+             (let [inner (parse-inline nodes* opts)]
+               (assoc acc :content (str content (:content inner))))
+             (let [href (attr node "href")
+                   inner (parse-inline nodes* opts)
+                   wiki (href->wiki-markup href (:content inner) opts)]
+               (assoc acc :content (str content wiki))))
+
+           "span"
+           (if (has-class? node "bookmark-desc")
+             acc
+             (let [inner (parse-inline nodes* opts)
+                   start (count content)]
+               {:content (str content (:content inner))
+                :content-spans (vec (concat content-spans
+                                            (shift-spans (:content-spans inner) start)))}))
+
+           ;; unwrap unknown inline tags
+           (let [inner (parse-inline nodes* opts)
+                 start (count content)]
+             {:content (str content (:content inner))
+              :content-spans (vec (concat content-spans
+                                          (shift-spans (:content-spans inner) start)))})))
+
+       :else acc))
+   {:content "" :content-spans []}
+   nodes))
+
+(defn- split-inline-and-blocks
+  "Split mixed children into leading inline nodes and trailing block-level nodes."
+  [nodes]
+  (loop [nodes (vec nodes)
+         inline []]
+    (if (empty? nodes)
+      [inline []]
+      (let [n (first nodes)]
+        (if (or (blank-text-node? n)
+                (and (el? n) (= "input" (tag-name n)))
+                (and (not (block-level-el? n))
+                     (or (text-node? n) (el? n))))
+          (if (blank-text-node? n)
+            (recur (rest nodes) inline)
+            (recur (rest nodes) (conj inline n)))
+          ;; Hit first block-level (or non-inline): rest are blockish
+          [inline (vec nodes)])))))
+
+(defn- make-block
+  [id type parent {:keys [content content-spans]} child-ids data]
+  (cond-> {:id id
+           :type type
+           :content (or content "")
+           :children (vec child-ids)
+           :parent parent}
+    (seq content-spans) (assoc :content-spans (vec content-spans))
+    data (assoc :data data)))
+
+(declare parse-flow)
+(declare parse-element)
+
+(defn- merge-parsed
+  "Merge `{:ids :blocks}` results."
+  [a b]
+  {:ids (into (vec (:ids a)) (:ids b))
+   :blocks (merge (:blocks a) (:blocks b))})
+
+(defn- parse-li
+  "Parse a single `<li>` into a list-item / ordered-list-item block."
+  [^html-dom/Element li parent-id list-type opts]
+  (let [id (new-block-id)
+        nodes (child-nodes li)
+        [inline-nodes block-nodes] (split-inline-and-blocks nodes)
+        inline (parse-inline inline-nodes opts)
+        ;; Nested lists / blocks become children
+        kids (parse-flow block-nodes id opts)
+        block (make-block id list-type parent-id inline (:ids kids) nil)]
+    {:ids [id]
+     :blocks (assoc (:blocks kids) id block)}))
+
+(defn- parse-list
+  [^html-dom/Element el parent-id list-type opts]
+  (reduce
+   (fn [acc ^html-dom/Element child]
+     (if (= "li" (tag-name child))
+       (merge-parsed acc (parse-li child parent-id list-type opts))
+       acc))
+   {:ids [] :blocks {}}
+   (element-children el)))
+
+(defn- find-summary [^html-dom/Element details]
+  (first (filter #(= "summary" (tag-name %)) (element-children details))))
+
+(defn- parse-element
+  "Parse one element into zero-or-more sibling blocks under parent-id.
+   Returns `{:ids :blocks}`."
+  [^html-dom/Element el parent-id opts]
+  (let [tag (tag-name el)]
+    (cond
+      ;; Skip images
+      (= "img" tag)
+      {:ids [] :blocks {}}
+
+      (= "hr" tag)
+      (let [id (new-block-id)]
+        {:ids [id]
+         :blocks {id (make-block id :divider parent-id {:content "" :content-spans []} [] nil)}})
+
+      (= "ul" tag)
+      (parse-list el parent-id :list-item opts)
+
+      (= "ol" tag)
+      (parse-list el parent-id :ordered-list-item opts)
+
+      ;; Children wrapper — should be handled by flow lookahead; unwrap if seen alone
+      (and (= "div" tag) (has-class? el "children"))
+      (parse-flow (child-nodes el) parent-id opts)
+
+      (and (= "div" tag) (has-class? el "task"))
+      (let [id (new-block-id)
+            nodes (child-nodes el)
+            checked? (boolean
+                      (some (fn [n]
+                              (and (el? n)
+                                   (= "input" (tag-name n))
+                                   (let [attrs (.-attributes ^html-dom/Element n)
+                                         v (get attrs "checked")]
+                                     ;; HTML boolean attr: present (even as "") means checked
+                                     (not (nil? v)))))
+                            nodes))
+            [inline-nodes block-nodes] (split-inline-and-blocks nodes)
+            inline (parse-inline inline-nodes opts)
+            kids (parse-flow block-nodes id opts)
+            block (make-block id :task parent-id inline (:ids kids) {:checked checked?})]
+        {:ids [id] :blocks (assoc (:blocks kids) id block)})
+
+      (and (= "aside" tag) (has-class? el "callout"))
+      (let [id (new-block-id)
+            icon (let [v (attr el "data-icon")] (if (str/blank? v) "💡" v))
+            [inline-nodes block-nodes] (split-inline-and-blocks (child-nodes el))
+            inline (parse-inline inline-nodes opts)
+            kids (parse-flow block-nodes id opts)
+            block (make-block id :callout parent-id inline (:ids kids) {:icon icon})]
+        {:ids [id] :blocks (assoc (:blocks kids) id block)})
+
+      (= "details" tag)
+      (let [id (new-block-id)
+            summary-el (find-summary el)
+            summary-inline (if summary-el
+                             (parse-inline (child-nodes summary-el) opts)
+                             {:content "" :content-spans []})
+            rest-nodes (filterv (fn [n]
+                                  (not (and (el? n) (= "summary" (tag-name n)))))
+                                (child-nodes el))
+            kids (parse-flow rest-nodes id opts)
+            block (make-block id :toggle parent-id summary-inline (:ids kids) nil)]
+        {:ids [id] :blocks (assoc (:blocks kids) id block)})
+
+      (and (= "a" tag) (has-class? el "bookmark"))
+      (let [id (new-block-id)
+            url (attr el "href")
+            ;; Title = direct text; desc from .bookmark-desc
+            desc-el (first (filter #(and (el? %) (has-class? % "bookmark-desc"))
+                                   (child-nodes el)))
+            title-nodes (filterv (fn [n]
+                                   (not (and (el? n) (has-class? n "bookmark-desc"))))
+                                 (child-nodes el))
+            title (:content (parse-inline title-nodes opts))
+            desc (if desc-el (:content (parse-inline (child-nodes desc-el) opts)) "")
+            block (make-block id :bookmark parent-id
+                              {:content "" :content-spans []}
+                              []
+                              (cond-> {:url url :title title}
+                                (seq desc) (assoc :desc desc)))]
+        {:ids [id] :blocks {id block}})
+
+      (= "pre" tag)
+      (let [id (new-block-id)
+            code-el (first (filter #(and (el? %) (= "code" (tag-name %)))
+                                   (element-children el)))
+            text (if code-el
+                   (:content (parse-inline (child-nodes code-el) opts))
+                   (:content (parse-inline (child-nodes el) opts)))
+            block (make-block id :code-block parent-id
+                              {:content text :content-spans []} [] nil)]
+        {:ids [id] :blocks {id block}})
+
+      (#{"h1" "h2" "h3" "p" "blockquote"} tag)
+      (let [id (new-block-id)
+            b-type (case tag
+                     "h1" :heading-1
+                     "h2" :heading-2
+                     "h3" :heading-3
+                     "blockquote" :blockquote
+                     :paragraph)
+            [inline-nodes block-nodes] (split-inline-and-blocks (child-nodes el))
+            inline (parse-inline inline-nodes opts)
+            kids (parse-flow block-nodes id opts)
+            block (make-block id b-type parent-id inline (:ids kids) nil)]
+        {:ids [id] :blocks (assoc (:blocks kids) id block)})
+
+      ;; Generic block-* div from export
+      (and (= "div" tag) (has-class? el "block"))
+      (let [id (new-block-id)
+            cls (or (.-className el) "")
+            type-name (some (fn [c]
+                              (when (str/starts-with? c "block-")
+                                (subs c 6)))
+                            (str/split cls #"\s+"))
+            b-type (if (and type-name (not= type-name "block") (seq type-name))
+                     (keyword type-name)
+                     :paragraph)
+            [inline-nodes block-nodes] (split-inline-and-blocks (child-nodes el))
+            inline (parse-inline inline-nodes opts)
+            kids (parse-flow block-nodes id opts)
+            block (make-block id b-type parent-id inline (:ids kids) nil)]
+        {:ids [id] :blocks (assoc (:blocks kids) id block)})
+
+      ;; Unknown element: unwrap children into flow
+      :else
+      (parse-flow (child-nodes el) parent-id opts))))
+
+(defn- children-wrapper? [node]
+  (and (el? node) (= "div" (tag-name node)) (has-class? node "children")))
+
+(defn- parse-flow
+  "Parse a sequence of sibling nodes under parent-id.
+   Handles `<block/><div class=\"children\">…</div>` pairing from export."
+  [nodes parent-id opts]
+  (loop [nodes (vec nodes)
+         acc {:ids [] :blocks {}}]
+    (if (empty? nodes)
+      acc
+      (let [n (first nodes)
+            rest-nodes (rest nodes)]
+        (cond
+          (blank-text-node? n)
+          (recur rest-nodes acc)
+
+          (children-wrapper? n)
+          ;; Orphan children wrapper — attach as siblings under parent
+          (recur rest-nodes (merge-parsed acc (parse-flow (child-nodes n) parent-id opts)))
+
+          (el? n)
+          (let [parsed (parse-element n parent-id opts)
+                ;; Lookahead: next non-blank node is children wrapper → attach to last id
+                [next-el remaining]
+                (loop [r rest-nodes]
+                  (cond
+                    (empty? r) [nil r]
+                    (blank-text-node? (first r)) (recur (rest r))
+                    :else [(first r) (rest r)]))
+                attach? (and (seq (:ids parsed))
+                             (children-wrapper? next-el))
+                ]
+            (if attach?
+              (let [parent-block-id (last (:ids parsed))
+                    kids (parse-flow (child-nodes ^html-dom/Element next-el)
+                                     parent-block-id opts)
+                    ;; Merge kid blocks; update parent block's :children
+                    blocks* (-> (:blocks parsed)
+                                (merge (:blocks kids))
+                                (update parent-block-id
+                                        (fn [b]
+                                          (update b :children
+                                                  (fnil into []) (:ids kids)))))]
+                (recur remaining
+                       {:ids (into (:ids acc) (:ids parsed))
+                        :blocks (merge (:blocks acc) blocks*)}))
+              (recur (if next-el (cons next-el remaining) remaining)
+                     (merge-parsed acc parsed))))
+
+          (text-node? n)
+          ;; Loose text → paragraph
+          (let [t (str/trim (str/replace (or (.-data ^html-dom/Text n) "") "\u00a0" " "))]
+            (if (str/blank? t)
+              (recur rest-nodes acc)
+              (let [id (new-block-id)
+                    block (make-block id :paragraph parent-id
+                                      {:content t :content-spans []} [] nil)]
+                (recur rest-nodes
+                       {:ids (conj (:ids acc) id)
+                        :blocks (assoc (:blocks acc) id block)}))))
+
+          :else
+          (recur rest-nodes acc))))))
+
+(defn- body-nodes
+  "Root nodes to import from an HTML string (fragment or full document)."
+  [html-str]
+  (let [doc (html-parser/parse (or html-str ""))
+        body (.-body doc)]
+    (if body
+      (vec (.-nodes body))
+      [])))
+
+;; =============================================================================
 ;; Public API
 ;; =============================================================================
 
@@ -295,3 +707,30 @@
      (if block
        (render-one-block blocks block opts)
        ""))))
+
+(defn import-from-html
+  "Parse an HTML fragment (or full document) into a full editor `!state`.
+   Round-trips with `export-to-html` for supported block types.
+
+   Opts:
+   - `:href->wiki` `(fn [href label] -> markup string)` reverse of `:link-href`
+
+   On empty / failed parse, returns `persistence/create-empty-state`."
+  ([html-str] (import-from-html html-str nil))
+  ([html-str opts]
+   (try
+     (let [nodes (body-nodes html-str)
+           parsed (parse-flow nodes :root opts)
+           root (vec (:ids parsed))
+           blocks (:blocks parsed)]
+       (if (seq root)
+         {:root root
+          :blocks blocks
+          :active-block-id nil
+          :selected-block-ids #{}
+          :cursor-visible false
+          :history {:undo-stack [] :redo-stack []}}
+         (persistence/create-empty-state)))
+     (catch Exception e
+       (dart:core/print (str "❌ HTML import failed; falling back to blank document: " e))
+       (persistence/create-empty-state)))))
