@@ -129,7 +129,8 @@
 
     (f/widget
      :managed [editor-focus-node (m/FocusNode)
-               marquee-key (m/GlobalKey)
+               ;; GlobalKey has no .dispose — must opt out of default :dispose.
+               marquee-key (m/GlobalKey) :dispose nil
                scroll-ctrl (m/ScrollController)]
      :watch [state !state
              selecting? !selecting?

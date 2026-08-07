@@ -64,64 +64,98 @@
    .text text
    .style (.copyWith ^m/TextStyle base-style
                      .color (m/Color 0xFF64B5F6)
-                     .decoration m.TextDecoration/underline)
+                     .decoration m.TextDecoration/overline)
    .recognizer (when (and on-link-tap href)
                  (let [r (gestures/TapGestureRecognizer.)]
                    (set! (.-onTap r)
                          #(on-link-tap {:type :external :url href}))
                    r))))
 
+(defn- block-ref-display
+  "Same visible label as wiki-token-spans :block-ref."
+  [uuid]
+  (str "⚓ " (apply str (take 8 uuid)) "…"))
+
+(defn- token-display-length
+  [{:keys [type content]}]
+  (case type
+    :link (+ 4 (count (or content "")))
+    :tag (+ 1 (count (or content "")))
+    :block-ref (count (block-ref-display content))
+    (count (or content ""))))
+
+(defn wiki-target-at
+  "Resolve display-offset → on-link-tap payload, or nil for plain text.
+   Offsets must match `build-wiki-text-spans` visible text (incl. `[[…]]`)."
+  [raw-text offset]
+  (let [text (or raw-text "")
+        off (max 0 (int (or offset 0)))]
+    (loop [tokens (inline/parse-text-spans text)
+           pos 0]
+      (when-let [token (first tokens)]
+        (let [len (token-display-length token)
+              end (+ pos len)]
+          (if (and (>= off pos) (< off end))
+            (case (:type token)
+              (:link :tag) (:content token)
+              :block-ref {:type :block :id (:content token)}
+              nil)
+            (recur (rest tokens) end)))))))
+
 (defn- wiki-token-spans
-  "Wiki-only TextSpans (no content-spans)."
-  [raw-text base-style on-link-tap]
-  (let [tokens (inline/parse-text-spans (or raw-text ""))]
-    (if (empty? tokens)
-      [(m/TextSpan .text "" .style base-style)]
-      (mapv
-       (fn [{:keys [type content]}]
-         (case type
-           :text
-           (m/TextSpan .text content .style base-style)
+  "Wiki-only TextSpans (no content-spans).
+   When `tappable?` is false, style links but omit recognizers (parent handles taps)."
+  ([raw-text base-style on-link-tap]
+   (wiki-token-spans raw-text base-style on-link-tap true))
+  ([raw-text base-style on-link-tap tappable?]
+   (let [tokens (inline/parse-text-spans (or raw-text ""))]
+     (if (empty? tokens)
+       [(m/TextSpan .text "" .style base-style)]
+       (mapv
+        (fn [{:keys [type content]}]
+          (case type
+            :text
+            (m/TextSpan .text content .style base-style)
 
-           :link
-           (m/TextSpan
-            .text (str "[[" content "]]")
-            .style (.copyWith ^m/TextStyle base-style
-                              .color (m/Color 0xFF64B5F6)
-                              .fontWeight m.FontWeight/bold
-                              .decoration m.TextDecoration/underline)
-            .recognizer (when on-link-tap
-                          (let [r (gestures/TapGestureRecognizer.)]
-                            (set! (.-onTap r) #(on-link-tap content))
-                            r)))
+            :link
+            (m/TextSpan
+             .text (str "[[" content "]]")
+             .style (.copyWith ^m/TextStyle base-style
+                               .color (m/Color 0xFF64B5F6)
+                               .fontWeight m.FontWeight/bold
+                               .decoration m.TextDecoration/overline)
+             .recognizer (when (and tappable? on-link-tap)
+                           (let [r (gestures/TapGestureRecognizer.)]
+                             (set! (.-onTap r) #(on-link-tap content))
+                             r)))
 
-           :tag
-           (m/TextSpan
-            .text (str "#" content)
-            .style (.copyWith ^m/TextStyle base-style
-                              .color (m/Color 0xFFBA68C8)
-                              .fontStyle m.FontStyle/italic)
-            .recognizer (when on-link-tap
-                          (let [r (gestures/TapGestureRecognizer.)]
-                            (set! (.-onTap r) #(on-link-tap content))
-                            r)))
+            :tag
+            (m/TextSpan
+             .text (str "#" content)
+             .style (.copyWith ^m/TextStyle base-style
+                               .color (m/Color 0xFFBA68C8)
+                               .fontStyle m.FontStyle/italic)
+             .recognizer (when (and tappable? on-link-tap)
+                           (let [r (gestures/TapGestureRecognizer.)]
+                             (set! (.-onTap r) #(on-link-tap content))
+                             r)))
 
-           :block-ref
-           (m/TextSpan
-            .text (str "⚓ " (apply str (take 8 content)) "…")
-            .style (.copyWith ^m/TextStyle base-style
-                              .color (m/Color 0xFFB0BEC5)
-                              .fontSize (max 10.0 (- (or (.-fontSize ^m/TextStyle base-style) 16.0) 2.0))
-                              .backgroundColor (m/Color 0xFF263238)
-                              .decoration m.TextDecoration/underline
-                              .decorationStyle m.TextDecorationStyle/dashed)
-            .recognizer (when on-link-tap
-                          (let [r (gestures/TapGestureRecognizer.)]
-                            (set! (.-onTap r) #(on-link-tap {:type :block :id content}))
-                            r)))
+            :block-ref
+            (m/TextSpan
+             .text (block-ref-display content)
+             .style (.copyWith ^m/TextStyle base-style
+                               .color (m/Color 0xFFB0BEC5)
+                               .fontSize (max 10.0 (- (or (.-fontSize ^m/TextStyle base-style) 16.0) 2.0))
+                               .backgroundColor (m/Color 0xFF263238)
+                               .decoration m.TextDecoration/underline
+                               .decorationStyle m.TextDecorationStyle/dashed)
+             .recognizer (when (and tappable? on-link-tap)
+                           (let [r (gestures/TapGestureRecognizer.)]
+                             (set! (.-onTap r) #(on-link-tap {:type :block :id content}))
+                             r)))
 
-           (m/TextSpan .text (str content) .style base-style)))
-       tokens))))
+            (m/TextSpan .text (str content) .style base-style)))
+        tokens)))))
 
 (defn- apply-basic-attrs
   "Apply bold/italic/underline from content-span attrs onto a TextStyle."
@@ -138,13 +172,16 @@
     s))
 
 (defn build-wiki-text-spans
-  "Parse wiki markup into tappable TextSpans for MongolText.rich.
+  "Parse wiki markup into TextSpans for MongolText.rich / MglSelectableText.
    Optional `content-spans` render `:href`/`:link` as external hyperlinks.
    `on-link-tap` receives a page/tag string, `{:type :block :id uuid}`,
-   or `{:type :external :url ...}`."
+   or `{:type :external :url ...}`.
+   Pass `tappable?` false when a parent GestureDetector owns taps (avoids arena fights)."
   ([raw-text base-style on-link-tap]
-   (build-wiki-text-spans raw-text nil base-style on-link-tap))
+   (build-wiki-text-spans raw-text nil base-style on-link-tap true))
   ([raw-text content-spans base-style on-link-tap]
+   (build-wiki-text-spans raw-text content-spans base-style on-link-tap true))
+  ([raw-text content-spans base-style on-link-tap tappable?]
    (let [text (or raw-text "")
          spans (or content-spans [])]
      (cond
@@ -152,7 +189,7 @@
        [(m/TextSpan .text "" .style base-style)]
 
        (empty? spans)
-       (wiki-token-spans text base-style on-link-tap)
+       (wiki-token-spans text base-style on-link-tap tappable?)
 
        :else
        (vec
@@ -161,8 +198,15 @@
            (let [href (:href attrs)
                  is-link? (or (:link attrs) href)]
              (if is-link?
-               [(external-link-span text href base-style on-link-tap)]
+               [(if tappable?
+                  (external-link-span text href base-style on-link-tap)
+                  (m/TextSpan
+                   .text text
+                   .style (.copyWith ^m/TextStyle base-style
+                                     .color (m/Color 0xFF64B5F6)
+                                     .decoration m.TextDecoration/overline)))]
                (wiki-token-spans text
                                  (apply-basic-attrs base-style attrs)
-                                 on-link-tap))))
+                                 on-link-tap
+                                 tappable?))))
          (text+spans->segments text spans)))))))

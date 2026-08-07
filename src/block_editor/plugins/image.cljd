@@ -253,14 +253,19 @@
        (fn [^m/BuildContext ctx]
          (let [screen-width (.-width (.-size (m.MediaQuery/of ctx)))
                display-width (* screen-width width-ratio)]
-           (m/ClipRRect
-            .borderRadius (m.BorderRadius/circular 8.0)
-            .child (m/Image.network url
-                     .width display-width
-                     .fit m.BoxFit/fitWidth
-                     .errorBuilder (fn [_ _ _]
-                                     (m/Container .width display-width .height 100.0 .color m.Colors/grey
-                                      .child (m/Center .child (m/Icon m.Icons/broken_image .color m.Colors/white))))))))))))
+           ;; Top-align like edit mode: block-reader-view wraps us in Expanded,
+           ;; so without Align the Image paints centered in the full height.
+           (m/Align
+            .alignment m.Alignment/topLeft
+            .child
+            (m/ClipRRect
+             .borderRadius (m.BorderRadius/circular 8.0)
+             .child (m/Image.network url
+                      .width display-width
+                      .fit m.BoxFit/fitWidth
+                      .errorBuilder (fn [_ _ _]
+                                      (m/Container .width display-width .height 100.0 .color m.Colors/grey
+                                       .child (m/Center .child (m/Icon m.Icons/broken_image .color m.Colors/white)))))))))))))
 
 ;; =============================================================================
 ;; 5. Plugin Registration

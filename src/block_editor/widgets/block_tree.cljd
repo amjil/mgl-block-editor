@@ -1,7 +1,8 @@
 (ns block-editor.widgets.block-tree
   "Handles recursive rendering of block trees, selection overlays, and menus.
-   Text blocks always mount selectable node-view (needed for cross-block drag).
-   Atomic / non-text inactive blocks may use read-mode."
+   Active text mounts the editable node-view; inactive text uses the same
+   selectable mount with wiki spans (link taps + cross-block drag).
+   Atomic / non-text inactive blocks use static read-mode."
   (:require ["package:flutter/material.dart" :as m]
             ["package:flutter/services.dart" :as s]
             ["package:mongol/mongol.dart" :as mgl]
@@ -9,6 +10,7 @@
             [components.menu :as menu]
             [block-editor.utils.text :as text]
             [block-editor.utils.collapse :as collapse]
+            [block-editor.utils.highlighter :as highlighter]
             [block-editor.widgets.reader :as reader]
             [block-editor.widgets.slash-menu :as slash-menu]
             [rich-editor.config :as rich-config]
@@ -94,8 +96,27 @@
         (custom-render id !state idx block style cfg)
         (m/Text (str "Unsupported block type: " (name block-type)))))))
 
+(defn- wiki-text-span-builder
+  "Inactive text: wiki markup styled for [[links]] / #tags / ((refs)).
+   Recognizers omitted — parent GestureDetector resolves taps via :wiki-target-at."
+  [content spans base-style cfg]
+  (m/TextSpan
+   .style base-style
+   .children (highlighter/build-wiki-text-spans content spans base-style
+                                                (:on-link-tap cfg)
+                                                false)))
+
+(defn- render-inactive-wiki-text
+  "Inactive text block: MglSelectableText + pan handlers (cross-block select)
+   with wiki spans so [[links]] remain tappable."
+  [id !state idx cfg]
+  (node-view/block-node id !state idx
+                        (assoc cfg
+                               :text-span-builder wiki-text-span-builder
+                               :wiki-target-at highlighter/wiki-target-at)))
+
 (defn- render-read-content
-  "Inactive/read-mode body: static reader; tap focuses the block."
+  "Inactive atomic/read-mode body: static reader; tap focuses the block."
   [id !state cfg block]
   (let [plugins (:block-plugins cfg [])
         on-link-tap (:on-link-tap cfg)]
@@ -199,12 +220,18 @@
         (m/Padding
          .padding (m.EdgeInsets/only .right 24.0)
          .child
-         ;; Text blocks must always mount MglSelectableText + pan handlers so
-         ;; desktop cross-block drag selection (global-selection) can hit-test
-         ;; inactive neighbors. Read-mode is only for inactive non-text/atomic.
+         ;; Active text → editable node-view.
+         ;; Inactive text → same selectable mount with wiki spans (link taps +
+         ;; cross-block drag hit-testing). Atomic inactive → static read-mode.
          (let [content-widget
-               (if (or is-active? is-text?)
+               (cond
+                 is-active?
                  (render-edit-content id !state idx cfg block is-active? style)
+
+                 is-text?
+                 (render-inactive-wiki-text id !state idx cfg)
+
+                 :else
                  (render-read-content id !state cfg block))]
 
            (m/Stack
