@@ -115,8 +115,15 @@
 ;; -----------------------------------------------------------------------------
 
 (defn mongol-block-editor
-  [!state & {:keys [editor-config padding background-color show-block-handles? leading-widget toolbar]
-             :or {padding (m/EdgeInsets.all 24.0) background-color m/Colors.transparent show-block-handles? false}}]
+  "Desktop always installs a shared-ime overlay unless `:wrap-ime?` is false —
+   use that when an ancestor already provides `ime-global-wrapper` (e.g. compose
+   header fields + editor), otherwise candidates render twice."
+  [!state & {:keys [editor-config padding background-color show-block-handles?
+                    leading-widget toolbar wrap-ime?]
+             :or {padding (m/EdgeInsets.all 24.0)
+                  background-color m/Colors.transparent
+                  show-block-handles? false
+                  wrap-ime? true}}]
   
   (let [cfg (be-config/build-config editor-config)
         ops (:block-ops cfg)
@@ -286,16 +293,18 @@
                           (kb-handlers/handle-backspace-action !state cfg)))))}})
                (m/SizedBox.shrink))]))
 
-          (overlay/ime-global-wrapper
-           (m/Column
-            .children
-            [(m/Expanded
-              .child
-              (editor-stack
-               (m/CallbackShortcuts
-                .bindings (rich-config/shortcut-bindings cfg !state)
-                .child core-input-area)
-               !state cfg selecting? select-rect
-               []))
-             (if toolbar toolbar (m/SizedBox.shrink))])
-           "main-page-ime-wrapper")))))))
+          (let [desktop-body
+                (m/Column
+                 .children
+                 [(m/Expanded
+                   .child
+                   (editor-stack
+                    (m/CallbackShortcuts
+                     .bindings (rich-config/shortcut-bindings cfg !state)
+                     .child core-input-area)
+                    !state cfg selecting? select-rect
+                    []))
+                  (if toolbar toolbar (m/SizedBox.shrink))])]
+            (if wrap-ime?
+              (overlay/ime-global-wrapper desktop-body "main-page-ime-wrapper")
+              desktop-body))))))))
