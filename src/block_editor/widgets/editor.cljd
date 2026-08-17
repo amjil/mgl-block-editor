@@ -117,7 +117,9 @@
 (defn mongol-block-editor
   "Desktop always installs a shared-ime overlay unless `:wrap-ime?` is false —
    use that when an ancestor already provides `ime-global-wrapper` (e.g. compose
-   header fields + editor), otherwise candidates render twice."
+   header fields + editor), otherwise candidates render twice.
+   On mobile, `:wrap-ime?` false also skips the in-editor virtual keyboard so
+   the host page can mount a full-width keyboard."
   [!state & {:keys [editor-config padding background-color show-block-handles?
                     leading-widget toolbar wrap-ime?]
              :or {padding (m/EdgeInsets.all 24.0)
@@ -259,39 +261,46 @@
         .color background-color
         .child
         (if (is-mobile?)
-          (f/widget
-           :let [info (merge options/keyboard-option
-                             {:keyboard/mongol-font-family "OyunQaganTig"
-                              :keyboard/key-container-color m/Colors.grey.shade500
-                              :keyboard/font-size 16})]
-           :bind {:info info}
-           (m/Column
-            .children
-            [(m/Expanded
-              .child
-              (editor-stack core-input-area !state cfg selecting? select-rect
-                            [(if (or (:active-block-id state) (:external-keyboard-delegate state))
-                               (keyboard/candidates nil)
-                               (m/SizedBox.shrink))]))
+          (if wrap-ime?
+            (f/widget
+             :let [info (merge options/keyboard-option
+                               {:keyboard/mongol-font-family "OyunQaganTig"
+                                :keyboard/key-container-color m/Colors.grey.shade500
+                                :keyboard/font-size 16})]
+             :bind {:info info}
+             (m/Column
+              .children
+              [(m/Expanded
+                .child
+                (editor-stack core-input-area !state cfg selecting? select-rect
+                              [(if (or (:active-block-id state) (:external-keyboard-delegate state))
+                                 (keyboard/candidates nil)
+                                 (m/SizedBox.shrink))]))
 
-             (if toolbar toolbar (m/SizedBox.shrink))
-             (if (or (:active-block-id state) (:external-keyboard-delegate state))
-               (keyboard/keyboard
-                {:custom-fns
-                 {:on-return
-                  (fn []
-                    (if (:external-keyboard-delegate @!state)
-                      (when-let [on-return-fn (:on-return (:external-keyboard-delegate @!state))] (on-return-fn))
-                      (kb-handlers/handle-enter-action !state cfg)))
-                  :on-backspace
-                  (fn []
-                    (let [candidates (:keyboard/candidates-list @vk-state/state)]
-                      (if (seq candidates)
-                        (vk-action/clear-candidates)
-                        (if (:external-keyboard-delegate @!state)
-                          (when-let [on-backspace-fn (:on-backspace (:external-keyboard-delegate @!state))] (on-backspace-fn))
-                          (kb-handlers/handle-backspace-action !state cfg)))))}})
-               (m/SizedBox.shrink))]))
+               (if toolbar toolbar (m/SizedBox.shrink))
+               (if (or (:active-block-id state) (:external-keyboard-delegate state))
+                 (keyboard/keyboard
+                  {:custom-fns
+                   {:on-return
+                    (fn []
+                      (if (:external-keyboard-delegate @!state)
+                        (when-let [on-return-fn (:on-return (:external-keyboard-delegate @!state))] (on-return-fn))
+                        (kb-handlers/handle-enter-action !state cfg)))
+                    :on-backspace
+                    (fn []
+                      (let [candidates (:keyboard/candidates-list @vk-state/state)]
+                        (if (seq candidates)
+                          (vk-action/clear-candidates)
+                          (if (:external-keyboard-delegate @!state)
+                            (when-let [on-backspace-fn (:on-backspace (:external-keyboard-delegate @!state))] (on-backspace-fn))
+                            (kb-handlers/handle-backspace-action !state cfg)))))}})
+                 (m/SizedBox.shrink))]))
+            (m/Column
+             .children
+             [(m/Expanded
+               .child
+               (editor-stack core-input-area !state cfg selecting? select-rect []))
+              (if toolbar toolbar (m/SizedBox.shrink))]))
 
           (let [desktop-body
                 (m/Column
