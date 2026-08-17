@@ -280,6 +280,12 @@
     "div" "aside" "details" "pre" "hr" "table" "section" "article"
     "header" "footer" "nav" "main"})
 
+;; Non-content tags whose text must never become editor content
+;; (email HTML often embeds <style> inside <body>).
+(def ^:private skip-tags
+  #{"style" "script" "head" "meta" "link" "noscript" "template"
+    "title" "base"})
+
 (defn- new-block-id []
   (str "b-" (random-uuid)))
 
@@ -301,6 +307,9 @@
 
 (defn- blank-text-node? [node]
   (and (text-node? node) (str/blank? (.-data ^html-dom/Text node))))
+
+(defn- skip-el? [node]
+  (and (el? node) (contains? skip-tags (tag-name node))))
 
 (defn- block-level-el? [node]
   (and (el? node) (contains? block-level-tags (tag-name node))))
@@ -356,6 +365,10 @@
        (let [tag (tag-name node)
              nodes* (child-nodes node)]
          (case tag
+           ("style" "script" "head" "meta" "link" "noscript"
+            "template" "title" "base")
+           acc
+
            "br"
            (assoc acc :content (str content "\n"))
 
@@ -451,10 +464,11 @@
       [inline []]
       (let [n (first nodes)]
         (if (or (blank-text-node? n)
+                (skip-el? n)
                 (and (el? n) (= "input" (tag-name n)))
                 (and (not (block-level-el? n))
                      (or (text-node? n) (el? n))))
-          (if (blank-text-node? n)
+          (if (or (blank-text-node? n) (skip-el? n))
             (recur (rest nodes) inline)
             (recur (rest nodes) (conj inline n)))
           ;; Hit first block-level (or non-inline): rest are blockish
@@ -511,8 +525,8 @@
   [^html-dom/Element el parent-id opts]
   (let [tag (tag-name el)]
     (cond
-      ;; Skip images
-      (= "img" tag)
+      ;; Skip non-content / media that must not become text blocks
+      (or (contains? skip-tags tag) (= "img" tag))
       {:ids [] :blocks {}}
 
       (= "hr" tag)
@@ -648,7 +662,7 @@
       (let [n (first nodes)
             rest-nodes (rest nodes)]
         (cond
-          (blank-text-node? n)
+          (or (blank-text-node? n) (skip-el? n))
           (recur rest-nodes acc)
 
           (children-wrapper? n)
@@ -663,6 +677,7 @@
                   (cond
                     (empty? r) [nil r]
                     (blank-text-node? (first r)) (recur (rest r))
+                    (skip-el? (first r)) (recur (rest r))
                     :else [(first r) (rest r)]))
                 attach? (and (seq (:ids parsed))
                              (children-wrapper? next-el))
