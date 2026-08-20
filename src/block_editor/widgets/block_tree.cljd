@@ -218,7 +218,8 @@
        (m/Expanded
         .child
         (m/Padding
-         .padding (m.EdgeInsets/only .right 24.0)
+         ;; Reduce right-side spacing for consistency with mobile.
+         .padding (m.EdgeInsets/only .right 10.0)
          .child
          ;; Active text → editable node-view.
          ;; Inactive text → same selectable mount with wiki spans (link taps +

@@ -43,96 +43,96 @@
        (m/Container
         .height 50.0
         .width double/infinity
-        .decoration (m/BoxDecoration
-                     .color (if (= (.-brightness (m/Theme.of ctx)) m/Brightness.dark)
-                              m/Colors.grey.shade900
-                              m/Colors.white)
-                     .boxShadow [(m/BoxShadow
-                                  .color (-> m.Colors/black (.withOpacity 0.05))
-                                  .blurRadius 4.0
-                                  .offset (m/Offset 0.0 -2.0))])
-        .child
-        (if active-id
-          (m/SingleChildScrollView
-           .scrollDirection m.Axis/horizontal
-           .child
-           (m/Row
-            .children
-            [(m/SizedBox .width 8.0)
+             .decoration (m/BoxDecoration
+                          .color (if (= (.-brightness (m/Theme.of ctx)) m/Brightness.dark)
+                                   m/Colors.grey.shade900
+                                   m/Colors.white)
+                          .boxShadow [(m/BoxShadow
+                                       .color (-> m.Colors/black (.withOpacity 0.05))
+                                       .blurRadius 4.0
+                                       .offset (m/Offset 0.0 -2.0))])
+             .child
+             (if active-id
+               (m/SingleChildScrollView
+                .scrollDirection m.Axis/horizontal
+                .child
+                (m/Row
+                 .children
+                 [(m/SizedBox .width 8.0)
 
-             (toolbar-button m.Icons/notes "Text" (= block-type :paragraph)
-                             #(ops/convert-block! !state active-id :paragraph))
+                  (toolbar-button m.Icons/notes "Text" (= block-type :paragraph)
+                                  #(ops/convert-block! !state active-id :paragraph))
 
-             (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
+                  (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
 
-             (toolbar-button m.Icons/title "Heading 1" (= block-type :heading-1)
-                             #(ops/convert-block! !state active-id :heading-1))
-             (toolbar-button m.Icons/format_size "Heading 2" (= block-type :heading-2)
-                             #(ops/convert-block! !state active-id :heading-2))
-             (toolbar-button m.Icons/text_fields "Heading 3" (= block-type :heading-3)
-                             #(ops/convert-block! !state active-id :heading-3))
+                  (toolbar-button m.Icons/title "Heading 1" (= block-type :heading-1)
+                                  #(ops/convert-block! !state active-id :heading-1))
+                  (toolbar-button m.Icons/format_size "Heading 2" (= block-type :heading-2)
+                                  #(ops/convert-block! !state active-id :heading-2))
+                  (toolbar-button m.Icons/text_fields "Heading 3" (= block-type :heading-3)
+                                  #(ops/convert-block! !state active-id :heading-3))
 
-             (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
+                  (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
 
-             ;; Inline external hyperlink → in-editor overlay (not Material showDialog)
-             (toolbar-button m.Icons/link "Link" link-active?
-                             (fn []
-                               (link/remember-selection! !state)
-                               (link/open-link-dialog! !state)))
+                  ;; Inline external hyperlink → in-editor overlay (not Material showDialog)
+                  (toolbar-button m.Icons/link "Link" link-active?
+                                  (fn []
+                                    (link/remember-selection! !state)
+                                    (link/open-link-dialog! !state)))
 
-             (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
+                  (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
 
-             (toolbar-button m.Icons/format_list_bulleted "List" (= block-type :list-item)
-                             #(ops/convert-block! !state active-id :list-item))
-             (toolbar-button m.Icons/format_list_numbered "Numbered List" (= block-type :ordered-list-item)
-                             #(ops/convert-block! !state active-id :ordered-list-item))
-             (toolbar-button m.Icons/check_box "Task" (= block-type :task)
-                             #(ops/convert-block! !state active-id :task))
-             (toolbar-button m.Icons/format_quote "Quote" (= block-type :blockquote)
-                             #(ops/convert-block! !state active-id :blockquote))
+                  (toolbar-button m.Icons/format_list_bulleted "List" (= block-type :list-item)
+                                  #(ops/convert-block! !state active-id :list-item))
+                  (toolbar-button m.Icons/format_list_numbered "Numbered List" (= block-type :ordered-list-item)
+                                  #(ops/convert-block! !state active-id :ordered-list-item))
+                  (toolbar-button m.Icons/check_box "Task" (= block-type :task)
+                                  #(ops/convert-block! !state active-id :task))
+                  (toolbar-button m.Icons/format_quote "Quote" (= block-type :blockquote)
+                                  #(ops/convert-block! !state active-id :blockquote))
 
-             (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
+                  (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
 
-             (toolbar-button m.Icons/image "Image" (= block-type :image)
-                             (fn []
-                               (let [current-content (get-in state-val [:blocks active-id :content] "")
-                                     is-url? (str/starts-with? current-content "http")]
-                                 (ops/convert-block! !state active-id :image)
-                                 (tx/commit-transaction!
-                                  !state
-                                  (tx/make-transaction
-                                   :ops [(tx/update-data-op active-id
-                                                            {:url (if is-url? current-content "https://picsum.photos/400/200")
-                                                             :width-ratio 0.5})
-                                         (tx/update-data-op active-id {:content (if is-url? "" current-content)})]
-                                   :after-selection nil)))))
+                  (toolbar-button m.Icons/image "Image" (= block-type :image)
+                                  (fn []
+                                    (let [current-content (get-in state-val [:blocks active-id :content] "")
+                                          is-url? (str/starts-with? current-content "http")]
+                                      (ops/convert-block! !state active-id :image)
+                                      (tx/commit-transaction!
+                                       !state
+                                       (tx/make-transaction
+                                        :ops [(tx/update-data-op active-id
+                                                                 {:url (if is-url? current-content "https://picsum.photos/400/200")
+                                                                  :width-ratio 0.5})
+                                              (tx/update-data-op active-id {:content (if is-url? "" current-content)})]
+                                        :after-selection nil)))))
 
-             (toolbar-button m.Icons/horizontal_rule "Divider" (= block-type :divider)
-                             #(ops/convert-block! !state active-id :divider))
+                  (toolbar-button m.Icons/horizontal_rule "Divider" (= block-type :divider)
+                                  #(ops/convert-block! !state active-id :divider))
 
-             (toolbar-button m.Icons/bookmark_border "Bookmark" (= block-type :bookmark)
-                             (fn []
-                               (let [current-content (get-in state-val [:blocks active-id :content] "")
-                                     is-url? (str/starts-with? current-content "http")]
-                                 (ops/convert-block! !state active-id :bookmark)
-                                 (tx/commit-transaction!
-                                  !state
-                                  (tx/make-transaction
-                                   :ops [(tx/update-data-op active-id
-                                                            {:url (if is-url? current-content "")
-                                                             :title (if is-url? current-content "Web Bookmark")
-                                                             :desc "External web page reference"})
-                                         (tx/update-data-op active-id {:content (if is-url? "" current-content)})]
-                                   :after-selection nil)))))
+                  (toolbar-button m.Icons/bookmark_border "Bookmark" (= block-type :bookmark)
+                                  (fn []
+                                    (let [current-content (get-in state-val [:blocks active-id :content] "")
+                                          is-url? (str/starts-with? current-content "http")]
+                                      (ops/convert-block! !state active-id :bookmark)
+                                      (tx/commit-transaction!
+                                       !state
+                                       (tx/make-transaction
+                                        :ops [(tx/update-data-op active-id
+                                                                 {:url (if is-url? current-content "")
+                                                                  :title (if is-url? current-content "Web Bookmark")
+                                                                  :desc "External web page reference"})
+                                              (tx/update-data-op active-id {:content (if is-url? "" current-content)})]
+                                        :after-selection nil)))))
 
-             (toolbar-button m.Icons/lightbulb_outline "Callout" (= block-type :callout)
-                             #(ops/convert-block! !state active-id :callout))
-             (toolbar-button m/Icons.arrow_right "Toggle List" (= block-type :toggle)
-                             #(ops/convert-block! !state active-id :toggle))
+                  (toolbar-button m.Icons/lightbulb_outline "Callout" (= block-type :callout)
+                                  #(ops/convert-block! !state active-id :callout))
+                  (toolbar-button m/Icons.arrow_right "Toggle List" (= block-type :toggle)
+                                  #(ops/convert-block! !state active-id :toggle))
 
-             (m/SizedBox .width 16.0)]))
+                  (m/SizedBox .width 16.0)]))
 
-          (m/Center
-           .child
-           (m/Text "Select a block to edit"
-                   .style (m/TextStyle .color m.Colors/grey))))))))))
+               (m/Center
+                .child
+                (m/Text "Select a block to edit"
+                        .style (m/TextStyle .color m.Colors/grey))))))))))
