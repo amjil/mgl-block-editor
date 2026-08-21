@@ -8,6 +8,7 @@
             [rich-editor.commands.transaction :as tx]
             [block-editor.utils.collapse :as collapse]
             [block-editor.utils.history :as history]
+            [block-editor.commands.navigate :as navigate]
             ["package:flutter/material.dart" :as m]
             [clojure.string :as str]))
 
@@ -400,4 +401,5 @@
    :delete-blocks! delete-blocks!
    :duplicate-blocks! duplicate-blocks!
    :execute-slash-command! execute-slash-command!
+   :reveal-block! navigate/reveal-block!
    :paste-when-no-focus! (fn [!state text] nil)})

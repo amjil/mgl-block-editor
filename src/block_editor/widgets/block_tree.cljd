@@ -11,6 +11,7 @@
             [block-editor.utils.text :as text]
             [block-editor.utils.collapse :as collapse]
             [block-editor.utils.highlighter :as highlighter]
+            [block-editor.commands.navigate :as navigate]
             [block-editor.widgets.reader :as reader]
             [block-editor.widgets.slash-menu :as slash-menu]
             [rich-editor.config :as rich-config]
@@ -144,6 +145,7 @@
          selected-ids (:selected-block-ids state-val #{})
          is-multi-select-mode? (seq selected-ids)
          is-block-selected? (contains? selected-ids id)
+         is-highlighted? (= id (:highlighted-block-id state-val))
          show-arrow? (and (collapse/has-children? (:blocks state-val) id)
                           (not= block-type :toggle))
          is-collapsed? (:collapsed? block false)
@@ -163,7 +165,10 @@
                (when-let [f (:toggle-block-selection! ops)] (f !state id))
                (show-menu))))]
 
-     (m/Column
+     (m/KeyedSubtree
+      .key (navigate/widget-key id)
+      .child
+      (m/Column
       .crossAxisAlignment m.CrossAxisAlignment/start
       .children
       [(if show-handle?
@@ -246,12 +251,22 @@
                                      .borderRadius (m.BorderRadius/circular 4.0))))
                (m/SizedBox.shrink))
 
+             (if is-highlighted?
+               (m/Positioned.fill
+                .child (m/IgnorePointer
+                        .child (m/Container
+                                .decoration (m/BoxDecoration
+                                             .color (-> m.Colors/amber (.withOpacity 0.22))
+                                             .border (m/Border.all .color m.Colors/amber .width 1.5)
+                                             .borderRadius (m.BorderRadius/circular 4.0)))))
+               (m/SizedBox.shrink))
+
              (if is-multi-select-mode?
                (m/GestureDetector
                 .behavior m.HitTestBehavior/opaque
                 .onTap #(when-let [f (:toggle-block-selection! ops)] (f !state id))
                 .child (m/IgnorePointer .child content-widget))
-               content-widget)]))))]))))
+               content-widget)]))))])))))
 
 (defn block-subtree
   "Recursively renders a block and its nested children (unless :collapsed?)."

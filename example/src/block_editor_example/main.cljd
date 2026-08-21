@@ -9,6 +9,7 @@
             
             [block-editor.widgets.toolbar :as toolbar]
             [block-editor.widgets.editor :as editor]
+            [block-editor.commands.navigate :as navigate]
             [block-editor.utils.persistence :as persist] ;; Persistence module
 
             ;; Cross-platform Mongolian IME engine libraries
@@ -22,16 +23,21 @@
     (or (= platform foundation.TargetPlatform/android)
         (= platform foundation.TargetPlatform/iOS))))
 
+(defn- push-page! [^m/BuildContext ctx page]
+  (.push (m/Navigator.of ctx)
+         (m/MaterialPageRoute .builder (fn [_] page)))
+  nil)
+
 ;; =============================================================================
 ;; 1. State Initialization & Fallback Mock Data
 ;; =============================================================================
 
-;; Default mock / fallback data
-(def ^:private fallback-initial-state
+;; Normal editor document (persisted).
+(def ^:private editor-initial-state
   {:root ["b-1" "b-2" "b-2b" "b-3" "b-4"]
    :active-block-id nil
    :cursor-visible false
-   :history {:undo-stack [] :redo-stack []} ;; Empty history stacks
+   :history {:undo-stack [] :redo-stack []}
    :external-keyboard-delegate nil
    :blocks {"b-1"   {:id "b-1" :type :heading-1 :content "Block Editor Test" :children ["b-1a" "b-1b"] :parent :root}
             "b-1a"  {:id "b-1a" :type :paragraph :content "Nested child A — click arrow or Cmd+. to collapse" :children ["b-1a1"] :parent "b-1"}
@@ -42,10 +48,34 @@
             "b-3"   {:id "b-3" :type :image :data {:url "https://picsum.photos/400/200" :width-ratio 0.5} :children [] :parent :root}
             "b-4"   {:id "b-4" :type :paragraph :content "status:: done\nnotes:: linked to [[Journal]]" :children [] :parent :root}}})
 
-(defonce !doc-state (atom fallback-initial-state))
+;; Locate-demo document: heading starts collapsed, extra columns force a horizontal scroll.
+(def ^:private locate-demo-state
+  {:root ["b-1" "b-2" "b-2b" "b-3" "b-4" "b-5" "b-6" "b-7" "b-8" "b-9" "b-10"]
+   :active-block-id nil
+   :cursor-visible false
+   :history {:undo-stack [] :redo-stack []}
+   :external-keyboard-delegate nil
+   :blocks {"b-1"   {:id "b-1" :type :heading-1 :content "Block Editor Test"
+                     :children ["b-1a" "b-1b"] :parent :root :collapsed? true}
+            "b-1a"  {:id "b-1a" :type :paragraph :content "Nested child A — collapsed with the heading" :children ["b-1a1"] :parent "b-1"}
+            "b-1a1" {:id "b-1a1" :type :paragraph :content "SEARCH HIT — nested grandchild" :children [] :parent "b-1a"}
+            "b-1b"  {:id "b-1b" :type :paragraph :content "Nested child B" :children [] :parent "b-1"}
+            "b-2"   {:id "b-2" :type :paragraph :content "See [[Hohhot Trip]] and #travel" :children [] :parent :root}
+            "b-2b"  {:id "b-2b" :type :task :content "Pack camera" :data {:checked false} :children [] :parent :root}
+            "b-3"   {:id "b-3" :type :image :data {:url "https://picsum.photos/400/200" :width-ratio 0.5} :children [] :parent :root}
+            "b-4"   {:id "b-4" :type :paragraph :content "status:: done\nnotes:: linked to [[Journal]]" :children [] :parent :root}
+            "b-5"   {:id "b-5" :type :paragraph :content "Filler 1 — keep scrolling" :children [] :parent :root}
+            "b-6"   {:id "b-6" :type :paragraph :content "Filler 2" :children [] :parent :root}
+            "b-7"   {:id "b-7" :type :paragraph :content "Filler 3" :children [] :parent :root}
+            "b-8"   {:id "b-8" :type :paragraph :content "Filler 4" :children [] :parent :root}
+            "b-9"   {:id "b-9" :type :paragraph :content "Filler 5" :children [] :parent :root}
+            "b-10"  {:id "b-10" :type :heading-2 :content "SEARCH HIT — last block" :children [] :parent :root}}})
+
+(defonce !doc-state (atom editor-initial-state))
+(defonce !locate-state (atom locate-demo-state))
 (def ^:private doc-storage-key "mongol_doc_v1")
 
-;; Async save
+;; Async save (normal editor only)
 (defn save-document-async! 
   [state-val]
   (let [json-str (persist/export-to-json state-val)]
@@ -87,41 +117,146 @@
                     (m/TextStyle .fontSize 18.0 .color (m/Color 0xFFD0D0D0) .fontFamily "OyunQaganTig")))})
 
 ;; =============================================================================
-;; 3. Main UI & App Entry
+;; 3. Screens
 ;; =============================================================================
 
+(defn- editor-body [!state]
+  (editor/mongol-block-editor
+   !state
+   :editor-config my-editor-config
+   :toolbar (toolbar/editor-toolbar !state my-editor-config)
+   :background-color (m/Color 0xFF121212)
+   :show-block-handles? true
+   :padding (m.EdgeInsets/all 32.0)))
+
 (defn editor-screen []
-  ;; Keep atom in a plain let outside f/widget
   (let [!save-timer (atom nil)]
     (f/widget
-     ;; Watch global state changes
      :watch [current-state !doc-state]
-     
-     ;; Update !save-timer during UI rebuild
      (let [_ (when @!save-timer (.cancel ^async/Timer @!save-timer)
                    nil)
-           _ (reset! !save-timer 
-                     (async/Timer. 
-                      (dart:core/Duration .seconds 2) 
+           _ (reset! !save-timer
+                     (async/Timer.
+                      (dart:core/Duration .seconds 2)
                       #(save-document-async! current-state)))]
-       
        (m/Scaffold
         .backgroundColor (m/Color 0xFF121212)
-        .appBar (m/AppBar 
+        .appBar (m/AppBar
                  .title (m/Text "Block Editor Example")
                  .elevation 0.0
                  .backgroundColor (m/Color 0xFF1E1E1E)
                  .foregroundColor (m/Color 0xFFF5F5F5))
         .body
-        (m/SafeArea
+        (m/SafeArea .child (editor-body !doc-state)))))))
+
+(def ^:private search-hits
+  [{:block-id "b-1a1"
+    :title "Nested grandchild"
+    :subtitle "Collapsed under Heading 1 — should expand + highlight"}
+   {:block-id "b-3"
+    :title "Image block"
+    :subtitle "Middle of the document"}
+   {:block-id "b-10"
+    :title "Last block"
+    :subtitle "Far right — should scroll horizontally"}])
+
+(defn locate-editor-screen [hit-title]
+  (f/widget
+   (m/Scaffold
+    .backgroundColor (m/Color 0xFF121212)
+    .appBar (m/AppBar
+             .title (m/Text (str "Locate: " hit-title))
+             .elevation 0.0
+             .backgroundColor (m/Color 0xFF1E1E1E)
+             .foregroundColor (m/Color 0xFFF5F5F5))
+    .body
+    (m/SafeArea .child (editor-body !locate-state)))))
+
+(defn- open-search-hit! [^m/BuildContext ctx {:keys [block-id title]}]
+  (reset! !locate-state locate-demo-state)
+  (navigate/reveal-block! !locate-state block-id)
+  (push-page! ctx (locate-editor-screen title)))
+
+(defn search-demo-screen []
+  (f/widget
+   :context ctx
+   (m/Scaffold
+    .backgroundColor (m/Color 0xFF121212)
+    .appBar (m/AppBar
+             .title (m/Text "Search results")
+             .elevation 0.0
+             .backgroundColor (m/Color 0xFF1E1E1E)
+             .foregroundColor (m/Color 0xFFF5F5F5))
+    .body
+    (m/SafeArea
+     .child
+     (m/ListView
+      .padding (m.EdgeInsets/all 16.0)
+      .children
+      (into
+       [(m/Padding
+         .padding (m.EdgeInsets/only .bottom 16.0)
          .child
-         (editor/mongol-block-editor 
-          !doc-state 
-          :editor-config my-editor-config
-          :toolbar (toolbar/editor-toolbar !doc-state my-editor-config)
-          :background-color (m/Color 0xFF121212)
-          :show-block-handles? true
-          :padding (m.EdgeInsets/all 32.0))))))))
+         (m/Text "Tap a hit to open the page and scroll to that block (expand, scroll, amber flash)."
+                 .style (m/TextStyle .color m.Colors/white70 .fontSize 14.0 .height 1.4)))]
+       (mapv
+        (fn [hit]
+          (m/Card
+           .color (m/Color 0xFF1E1E1E)
+           .margin (m.EdgeInsets/only .bottom 12.0)
+           .child
+           (m/ListTile
+            .leading (m/Icon m.Icons/search .color m.Colors/amber)
+            .title (m/Text (:title hit) .style (m/TextStyle .color m.Colors/white))
+            .subtitle (m/Text (:subtitle hit) .style (m/TextStyle .color m.Colors/white54))
+            .onTap #(open-search-hit! ctx hit))))
+        search-hits)))))))
+
+(defn- home-button [label subtitle on-pressed]
+  (m/SizedBox
+   .width 320.0
+   .child
+   (m/ElevatedButton
+    .onPressed on-pressed
+    .child
+    (m/Padding
+     .padding (m.EdgeInsets/symmetric .horizontal 8.0 .vertical 12.0)
+     .child
+     (m/Column
+      .crossAxisAlignment m.CrossAxisAlignment/start
+      .mainAxisSize m.MainAxisSize/min
+      .children
+      [(m/Text label .style (m/TextStyle .fontSize 18.0 .fontWeight m.FontWeight/w600))
+       (m/SizedBox .height 6.0)
+       (m/Text subtitle .style (m/TextStyle .fontSize 13.0 .color m.Colors/white54))])))))
+
+(defn home-screen []
+  (f/widget
+   :context ctx
+   (m/Scaffold
+    .backgroundColor (m/Color 0xFF121212)
+    .appBar (m/AppBar
+             .title (m/Text "Block Editor Example")
+             .elevation 0.0
+             .backgroundColor (m/Color 0xFF1E1E1E)
+             .foregroundColor (m/Color 0xFFF5F5F5))
+    .body
+    (m/Center
+     .child
+     (m/Column
+      .mainAxisSize m.MainAxisSize/min
+      .children
+      [(home-button "Editor"
+                    "Normal editing, persistence, toolbar"
+                    #(push-page! ctx (editor-screen)))
+       (m/SizedBox .height 16.0)
+       (home-button "Search locate"
+                    "Open a page from a search hit and scroll to the block"
+                    #(push-page! ctx (search-demo-screen)))])))))
+
+;; =============================================================================
+;; 4. App Entry
+;; =============================================================================
 
 (defn main []
   (m.WidgetsFlutterBinding/ensureInitialized)
@@ -138,11 +273,11 @@
   (when (is-mobile?)
     (input-control/set-control))
 
-  ;; 2. Load persisted data before launch
+  ;; 2. Load persisted data before launch (normal editor only)
   (let [prefs (await (prefs/SharedPreferences.getInstance))
         saved-json (.getString prefs doc-storage-key)]
     (if saved-json
-      (do 
+      (do
         (dart:core/print "📥 Found local save, restoring...")
         (reset! !doc-state (persist/import-from-json saved-json)))
       (dart:core/print "📝 No local save; loading initial test data.")))
@@ -153,4 +288,4 @@
     .title "Block Editor Example"
     .debugShowCheckedModeBanner false
     .theme (m/ThemeData.dark)
-    .home (editor-screen))))
+    .home (home-screen))))

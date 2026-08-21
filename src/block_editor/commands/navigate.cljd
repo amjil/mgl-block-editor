@@ -1,0 +1,165 @@
+(ns block-editor.commands.navigate
+  "Locate a block in the open document: expand collapsed ancestors,
+   scroll it into view, and flash a highlight.
+
+   Host (e.g. search hit → open page):
+
+     (navigate/reveal-block! !state block-id)
+
+   Equivalent: assoc `:scroll-to-block-id` on editor state before/while
+   the editor is mounted. The widget consumes the field after layout."
+  (:require ["package:flutter/material.dart" :as m]
+            ["dart:async" :as async]))
+
+(def ^:private max-scroll-attempts 10)
+(def ^:private highlight-ms 1800)
+
+(defonce !block-keys (atom {}))
+(defonce ^:private !highlight-timer (atom nil))
+
+(defn widget-key
+  "Stable GlobalKey for a block column — used by ensureVisible."
+  [id]
+  (get (swap! !block-keys
+              (fn [m] (if (contains? m id) m (assoc m id (m/GlobalKey.)))))
+       id))
+
+(defn- parent-of
+  "Resolve parent id (`:root` for top-level). Uses `:parent` when present,
+   otherwise scans `:root` / `:children` (legacy docs)."
+  [state block-id]
+  (let [p (get-in state [:blocks block-id :parent])]
+    (cond
+      (= p :root) :root
+      (and p (get-in state [:blocks p])) p
+      (some #(= % block-id) (:root state [])) :root
+      :else
+      (or (some (fn [[id b]]
+                  (when (some #(= % block-id) (:children b []))
+                    id))
+                (:blocks state {}))
+          :root))))
+
+(defn ancestor-ids
+  "Parent chain from nearest ancestor to the root-level block (exclusive of
+   `block-id`). Empty if the block is already a root."
+  [state block-id]
+  (loop [id block-id acc [] seen #{}]
+    (if (contains? seen id)
+      acc
+      (let [parent (parent-of state id)]
+        (if (or (nil? parent) (= parent :root))
+          acc
+          (recur parent (conj acc parent) (conj seen id)))))))
+
+(defn root-ancestor-id
+  "Root-list item that contains `block-id` (the block itself when it is a root)."
+  [state block-id]
+  (or (last (ancestor-ids state block-id)) block-id))
+
+(defn- uncollapse-ancestors
+  [state block-id]
+  (reduce (fn [acc pid]
+            (assoc-in acc [:blocks pid :collapsed?] false))
+          state
+          (ancestor-ids state block-id)))
+
+(defn expand-ancestors!
+  "Uncollapse every ancestor so `block-id` can mount."
+  [!state block-id]
+  (swap! !state uncollapse-ancestors block-id)
+  !state)
+
+(defn- clear-highlight!
+  [!state block-id]
+  (when (= (:highlighted-block-id @!state) block-id)
+    (swap! !state dissoc :highlighted-block-id)))
+
+(defn schedule-clear-highlight!
+  "Drop the locate flash after a short delay. Restarts if called again."
+  [!state block-id]
+  (when-let [t @!highlight-timer]
+    (.cancel ^async/Timer t))
+  (reset! !highlight-timer
+          (async/Timer. (dart:core/Duration. .milliseconds highlight-ms)
+                        #(clear-highlight! !state block-id))))
+
+(defn- jump-toward-root!
+  "Lazy ReorderableListView may not have built the target yet. Jump toward
+   its root item using an average-extent estimate, then retry ensureVisible."
+  [^m/ScrollController scroll-ctrl root-ids target-root-id]
+  (when (and scroll-ctrl (.hasClients scroll-ctrl) target-root-id (seq root-ids))
+    (let [idx (.indexOf root-ids target-root-id)]
+      (when (>= idx 0)
+        (let [pos (.-position scroll-ctrl)
+              viewport (.-viewportDimension pos)
+              max-ext (.-maxScrollExtent pos)
+              n (count root-ids)
+              avg (/ (+ max-ext viewport) n)
+              raw (- (* idx avg) (* viewport 0.2))
+              target (max 0.0 (min max-ext raw))]
+          (.jumpTo pos target))))))
+
+(defn- block-context
+  [block-id]
+  (when-let [gkey (get @!block-keys block-id)]
+    (.-currentContext gkey)))
+
+(defn scroll-into-view!
+  "After the target is in the tree, animate it into the horizontal viewport.
+   If the key is not mounted yet, estimate-jump and retry for a few frames."
+  ([scroll-ctrl !state block-id]
+   (scroll-into-view! scroll-ctrl !state block-id 0))
+  ([scroll-ctrl !state block-id attempt]
+   (let [ctx (block-context block-id)]
+     (if ctx
+       (do
+         (m/Scrollable.ensureVisible
+          ctx
+          .duration (dart:core/Duration. .milliseconds 280)
+          .alignment 0.2
+          .curve m/Curves.easeOut)
+         (schedule-clear-highlight! !state block-id))
+       (when (< attempt max-scroll-attempts)
+         (let [state @!state]
+           (jump-toward-root! scroll-ctrl (:root state [])
+                              (root-ancestor-id state block-id)))
+         (m/WidgetsBinding.instance.addPostFrameCallback
+          (fn [_]
+            (scroll-into-view! scroll-ctrl !state block-id (inc attempt))))
+         nil)))))
+
+(defn consume-scroll-request!
+  "Editor calls this once per `:scroll-to-block-id`. Expands ancestors,
+   flashes highlight, then scrolls on the next frames."
+  [scroll-ctrl !state block-id]
+  (when (and block-id (get-in @!state [:blocks block-id]))
+    (swap! !state
+           (fn [s]
+             (-> (uncollapse-ancestors s block-id)
+                 (dissoc :scroll-to-block-id)
+                 (assoc :highlighted-block-id block-id))))
+    (schedule-clear-highlight! !state block-id)
+    (m/WidgetsBinding.instance.addPostFrameCallback
+     (fn [_]
+       (scroll-into-view! scroll-ctrl !state block-id)))
+    nil)
+  !state)
+
+(defn reveal-block!
+  "Public host API: expand collapsed ancestors, highlight, and ask the
+   mounted editor to scroll this block into view.
+
+   Safe to call before the editor widget exists — `:scroll-to-block-id`
+   is consumed on the first layout. Returns true when the id exists."
+  [!state block-id]
+  (if (and block-id (get-in @!state [:blocks block-id]))
+    (do
+      (swap! !state
+             (fn [s]
+               (-> (uncollapse-ancestors s block-id)
+                   (assoc :scroll-to-block-id block-id
+                          :highlighted-block-id block-id))))
+      (schedule-clear-highlight! !state block-id)
+      true)
+    false))

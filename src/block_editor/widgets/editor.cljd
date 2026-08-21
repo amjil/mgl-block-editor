@@ -8,6 +8,7 @@
             
             [block-editor.config :as be-config]
             [block-editor.commands.ops :as be-ops]
+            [block-editor.commands.navigate :as navigate]
             [block-editor.handlers.keyboard :as kb-handlers]
             [block-editor.widgets.block-tree :as block-tree]
             [block-editor.widgets.slash-menu :as slash-menu]
@@ -146,6 +147,17 @@
              select-rect !select-rect]
 
      (let [root-ids (:root state)
+
+           ;; Host set `:scroll-to-block-id` (via `reveal-block!` or assoc).
+           ;; Consume after this frame so keys/layout exist; ignore duplicates.
+           _ (do
+               (when-let [id (:scroll-to-block-id state)]
+                 (m/WidgetsBinding.instance.addPostFrameCallback
+                  (fn [_]
+                    (when (= id (:scroll-to-block-id @!state))
+                      (navigate/consume-scroll-request! scroll-ctrl !state id))))
+                 nil)
+               nil)
 
            block-list
            (m/ReorderableListView.builder
