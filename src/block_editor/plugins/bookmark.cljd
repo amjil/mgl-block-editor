@@ -96,12 +96,15 @@
 (defn- render-bookmark-edit
   [id !state _index _cfg]
   (f/widget
-   :watch [state-val !state]
-   (let [block (get-in state-val [:blocks id])
+   :watch [snap (f/$ (let [s (f/<! !state)
+                           block (get-in s [:blocks id])]
+                       {:block block
+                        :is-active? (= id (:active-block-id s))}))]
+   (let [block (:block snap)
          url (get-in block [:data :url] "")
          title (get-in block [:data :title] "")
          desc (get-in block [:data :desc] "")
-         is-active? (= id (:active-block-id state-val))]
+         is-active? (:is-active? snap)]
      (if (empty? url)
        ;; Empty card when no URL is bound
        (m/GestureDetector

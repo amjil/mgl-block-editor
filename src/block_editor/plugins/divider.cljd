@@ -6,10 +6,11 @@
 (defn- render-divider-edit
   [id !state _index cfg]
   (f/widget
-   :watch [state-val !state]
-   (let [is-active? (= id (:active-block-id state-val))
-         selected-ids (:selected-block-ids state-val #{})
-         is-block-selected? (contains? selected-ids id)
+   :watch [snap (f/$ (let [s (f/<! !state)]
+                       {:is-active? (= id (:active-block-id s))
+                        :is-block-selected? (contains? (:selected-block-ids s #{}) id)}))]
+   (let [is-active? (:is-active? snap)
+         is-block-selected? (:is-block-selected? snap)
          ops (:block-ops cfg)]
      (m/Builder
       .builder

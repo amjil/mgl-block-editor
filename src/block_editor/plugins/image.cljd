@@ -125,17 +125,22 @@
 (defn- render-image-edit
   [id !state _index _cfg]
   (f/widget
-   :watch [state-val !state]
-   (let [block* (get-in state-val [:blocks id])
+   :watch [snap (f/$ (let [s (f/<! !state)
+                           block (get-in s [:blocks id])]
+                       {:block block
+                        :is-active? (= id (:active-block-id s))
+                        :cursor-visible? (boolean (and (= id (:active-block-id s))
+                                                       (:cursor-visible s)))
+                        :is-block-selected? (contains? (:selected-block-ids s #{}) id)}))]
+   (let [block* (:block snap)
          url* (get-in block* [:data :url] "")
          content* (:content block* "")
          width-ratio (get-in block* [:data :width-ratio] default-width-ratio)
-         is-active? (= id (:active-block-id state-val))
-         sel (get-in state-val [:blocks id :selection])
+         is-active? (:is-active? snap)
+         sel (get-in block* [:selection])
          offset (if sel (.-extentOffset sel) 0)
-         cursor-visible? (and is-active? (:cursor-visible state-val))
-         selected-ids (:selected-block-ids state-val #{})
-         is-block-selected? (contains? selected-ids id)
+         cursor-visible? (:cursor-visible? snap)
+         is-block-selected? (:is-block-selected? snap)
          hero-tag (str "image-hero-" id)]
      (m/Builder
       .builder

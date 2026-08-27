@@ -142,17 +142,22 @@
                ;; GlobalKey has no .dispose — must opt out of default :dispose.
                marquee-key (m/GlobalKey) :dispose nil
                scroll-ctrl (m/ScrollController)]
-     :watch [state !state
+     :watch [shell (f/$ (let [s (f/<! !state)]
+                          {:root (:root s)
+                           :active-block-id (:active-block-id s)
+                           :has-kb? (boolean (or (:active-block-id s)
+                                                 (:external-keyboard-delegate s)))
+                           :scroll-to-block-id (:scroll-to-block-id s)}))
              selecting? !selecting?
              select-rect !select-rect]
 
-     (let [root-ids (:root state)
-           _ (node-view/sync-text-keys! state)
+     (let [root-ids (:root shell)
+           _ (node-view/sync-text-keys! @!state)
 
            ;; Host set `:scroll-to-block-id` (via `reveal-block!` or assoc).
            ;; Consume after this frame so keys/layout exist; ignore duplicates.
            _ (do
-               (when-let [id (:scroll-to-block-id state)]
+               (when-let [id (:scroll-to-block-id shell)]
                  (m/WidgetsBinding.instance.addPostFrameCallback
                   (fn [_]
                     (when (= id (:scroll-to-block-id @!state))
@@ -289,12 +294,12 @@
               [(m/Expanded
                 .child
                 (editor-stack shortcut-input !state cfg selecting? select-rect
-                              [(if (or (:active-block-id state) (:external-keyboard-delegate state))
+                              [(if (:has-kb? shell)
                                  (keyboard/candidates nil)
                                  (m/SizedBox.shrink))]))
 
                (if toolbar toolbar (m/SizedBox.shrink))
-               (if (or (:active-block-id state) (:external-keyboard-delegate state))
+               (if (:has-kb? shell)
                  (keyboard/keyboard
                   {:custom-fns
                    {:on-return

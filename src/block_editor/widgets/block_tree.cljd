@@ -129,12 +129,33 @@
       .key (ensure-block-key id)
       .child (reader/block-reader-view block plugins cfg on-link-tap !state)))))
 
+(defn- subtree-snapshot
+  "Children list + collapse. Typing in this block leaves this equal."
+  [state id]
+  (let [block (get-in state [:blocks id])]
+    {:children (:children block [])
+     :collapsed? (boolean (:collapsed? block false))}))
+
+(defn- chrome-snapshot
+  "Handle / overlay / active-vs-read chrome. Typing elsewhere leaves this equal."
+  [state id]
+  (let [block (get-in state [:blocks id])
+        selected-ids (:selected-block-ids state #{})
+        active? (= id (:active-block-id state))]
+    {:block block
+     :is-active? active?
+     :is-multi-select? (boolean (seq selected-ids))
+     :is-block-selected? (contains? selected-ids id)
+     :is-highlighted? (= id (:highlighted-block-id state))
+     :has-children? (boolean (seq (:children block [])))
+     :collapsed? (boolean (:collapsed? block false))}))
+
 (defn- render-single-block
   [id !state idx cfg show-handles? depth]
   (f/widget
-   :watch [state-val !state]
-   (let [block (get-in state-val [:blocks id])
-         is-active? (= id (:active-block-id state-val))
+   :watch [snap (f/$ (chrome-snapshot (f/<! !state) id))]
+   (let [block (:block snap)
+         is-active? (:is-active? snap)
          block-type (:type block)
          is-text? (rich-config/text-block-type? cfg block-type)
          style (if is-text? (rich-config/get-block-style cfg block-type) nil)
@@ -142,13 +163,12 @@
          handle-left-pad (max 0.0 (+ (- (+ 4.0 (/ exact-col-width 2.0)) 8.0) 2.0))
          ops (:block-ops cfg)
 
-         selected-ids (:selected-block-ids state-val #{})
-         is-multi-select-mode? (seq selected-ids)
-         is-block-selected? (contains? selected-ids id)
-         is-highlighted? (= id (:highlighted-block-id state-val))
-         show-arrow? (and (collapse/has-children? (:blocks state-val) id)
+         is-multi-select-mode? (:is-multi-select? snap)
+         is-block-selected? (:is-block-selected? snap)
+         is-highlighted? (:is-highlighted? snap)
+         show-arrow? (and (:has-children? snap)
                           (not= block-type :toggle))
-         is-collapsed? (:collapsed? block false)
+         is-collapsed? (:collapsed? snap)
          show-handle? (or show-arrow?
                           is-block-selected?
                           (and show-handles? is-active?))
@@ -165,7 +185,9 @@
                (when-let [f (:toggle-block-selection! ops)] (f !state id))
                (show-menu))))]
 
-     (m/KeyedSubtree
+     (if-not block
+       (m/SizedBox.shrink)
+       (m/KeyedSubtree
       .key (navigate/widget-key id)
       .child
       (m/Column
@@ -191,7 +213,7 @@
                              .child drag-icon))))
                  :items [{:type :item :title "Select" :leading m.Icons/check_box_outline_blank :on-tap #(when-let [f (:toggle-block-selection! ops)] (f !state id))}
                          {:type :divider}
-                         {:type :item :title "Delete" :leading m.Icons/delete :leading-color m.Colors/red :on-tap #(if is-multi-select-mode? ((:delete-blocks! ops) !state selected-ids) ((:delete-block! ops) !state id))}
+                         {:type :item :title "Delete" :leading m.Icons/delete :leading-color m.Colors/red :on-tap #(if is-multi-select-mode? ((:delete-blocks! ops) !state (:selected-block-ids @!state #{})) ((:delete-block! ops) !state id))}
                          {:type :divider}
                          {:type :item :title "Turn to Text" :leading m.Icons/notes :on-tap #(when-let [f (:convert-block! ops)] (f !state id :paragraph))}
                          {:type :item :title "Turn to Heading 1" :leading m.Icons/title :on-tap #(when-let [f (:convert-block! ops)] (f !state id :heading-1))}
@@ -266,16 +288,15 @@
                 .behavior m.HitTestBehavior/opaque
                 .onTap #(when-let [f (:toggle-block-selection! ops)] (f !state id))
                 .child (m/IgnorePointer .child content-widget))
-               content-widget)]))))])))))
+               content-widget)]))))]))))))
 
 (defn block-subtree
   "Recursively renders a block and its nested children (unless :collapsed?)."
   [id !state idx cfg show-handles? depth]
   (f/widget
-   :watch [state-val !state]
-   (let [block (get-in state-val [:blocks id])
-         children (:children block [])
-         collapsed? (:collapsed? block false)
+   :watch [snap (f/$ (subtree-snapshot (f/<! !state) id))]
+   (let [children (:children snap [])
+         collapsed? (:collapsed? snap false)
          visible-children (if collapsed? [] children)]
      (m/Row
       .crossAxisAlignment m.CrossAxisAlignment/start
@@ -286,6 +307,7 @@
         (render-single-block id !state idx cfg show-handles? depth)
         (map (fn [child-id]
                (m/Padding
+                .key (m/ValueKey child-id)
                 .padding (m.EdgeInsets/only .top 32.0)
                 .child (block-subtree child-id !state idx cfg show-handles? (inc depth))))
              visible-children)))))))
