@@ -147,6 +147,7 @@
              select-rect !select-rect]
 
      (let [root-ids (:root state)
+           _ (node-view/sync-text-keys! state)
 
            ;; Host set `:scroll-to-block-id` (via `reveal-block!` or assoc).
            ;; Consume after this frame so keys/layout exist; ignore duplicates.
@@ -263,11 +264,14 @@
                     (let [sel (get-in @!state [:blocks target-id :selection])
                           offset (if sel (.-extentOffset sel) (count (get-in @!state [:blocks target-id :content] "")))]
                       (editor-cmd/focus-block !state target-id offset))))
-                (do
-                  (ime/detach!)
-                  (swap! !state assoc :cursor-visible false))))
+                (ime/schedule-detach-if-unfocused! editor-focus-node !state)))
             .onKeyEvent (fn [node event] (kb-handlers/handle-key-event cfg !state node event))
-            .child interactive-area)]
+            .child interactive-area)
+
+           shortcut-input
+           (m/CallbackShortcuts
+            .bindings (rich-config/shortcut-bindings cfg !state)
+            .child core-input-area)]
 
        (m/Container
         .color background-color
@@ -284,7 +288,7 @@
               .children
               [(m/Expanded
                 .child
-                (editor-stack core-input-area !state cfg selecting? select-rect
+                (editor-stack shortcut-input !state cfg selecting? select-rect
                               [(if (or (:active-block-id state) (:external-keyboard-delegate state))
                                  (keyboard/candidates nil)
                                  (m/SizedBox.shrink))]))
@@ -311,7 +315,7 @@
              .children
              [(m/Expanded
                .child
-               (editor-stack core-input-area !state cfg selecting? select-rect []))
+               (editor-stack shortcut-input !state cfg selecting? select-rect []))
               (if toolbar toolbar (m/SizedBox.shrink))]))
 
           (let [desktop-body
@@ -319,12 +323,7 @@
                  .children
                  [(m/Expanded
                    .child
-                   (editor-stack
-                    (m/CallbackShortcuts
-                     .bindings (rich-config/shortcut-bindings cfg !state)
-                     .child core-input-area)
-                    !state cfg selecting? select-rect
-                    []))
+                   (editor-stack shortcut-input !state cfg selecting? select-rect []))
                   (if toolbar toolbar (m/SizedBox.shrink))])]
             (if wrap-ime?
               (overlay/ime-global-wrapper desktop-body "main-page-ime-wrapper")

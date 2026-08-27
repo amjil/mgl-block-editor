@@ -6,6 +6,8 @@
             [clojure.string :as str]
 
             [rich-editor.commands.transaction :as tx]
+            [rich-editor.config :as rich-config]
+            [rich-editor.commands.text-commands :as text-cmd]
             [block-editor.commands.ops :as ops]
             [block-editor.commands.link :as link]))
 
@@ -32,7 +34,9 @@
                      (get-in block [:data :url] ""))
          link-active? (boolean
                        (or (and (= block-type :image) (not (str/blank? image-url)))
-                           (and link-info (not (str/blank? (:href link-info))))))]
+                           (and link-info (not (str/blank? (:href link-info))))))
+         cmd-cfg (or (:editor-config state-val) cfg)
+         run-fmt! (fn [intent] (rich-config/run-command cmd-cfg !state intent))]
 
      ;; ExcludeFocus: clicking toolbar must NOT steal focus / collapse the text selection.
      (m/ExcludeFocus
@@ -71,6 +75,18 @@
                                   #(ops/convert-block! !state active-id :heading-2))
                   (toolbar-button m.Icons/text_fields "Heading 3" (= block-type :heading-3)
                                   #(ops/convert-block! !state active-id :heading-3))
+
+                  (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
+
+                  (toolbar-button m.Icons/format_bold "Bold"
+                                  (boolean (text-cmd/style-active? state-val :bold))
+                                  #(run-fmt! :bold))
+                  (toolbar-button m.Icons/format_italic "Italic"
+                                  (boolean (text-cmd/style-active? state-val :italic))
+                                  #(run-fmt! :italic))
+                  (toolbar-button m.Icons/format_underlined "Underline"
+                                  (boolean (text-cmd/style-active? state-val :underline))
+                                  #(run-fmt! :underline))
 
                   (m/VerticalDivider .indent 12.0 .endIndent 12.0 .width 16.0)
 

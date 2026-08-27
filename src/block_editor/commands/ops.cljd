@@ -285,6 +285,34 @@
     (doseq [id block-ids] (duplicate-block! !state id))
     (swap! !state assoc :selected-block-ids #{})))
 
+(defn indent-selection!
+  "Tab / Shift+Tab entry used by rich-editor `:indent` / `:outdent` commands.
+   `direction` is 1 (indent) or -1 (outdent)."
+  [!state direction]
+  (let [selected (:selected-block-ids @!state #{})
+        active-id (:active-block-id @!state)]
+    (cond
+      (seq selected)
+      (if (pos? direction)
+        (indent-blocks! !state selected)
+        (outdent-blocks! !state selected))
+
+      active-id
+      (if (pos? direction)
+        (indent-block! !state active-id)
+        (outdent-block! !state active-id)))))
+
+(defn paste-when-no-focus!
+  "Insert clipboard text at the end of the last visible block when nothing is focused."
+  [!state raw-text]
+  (when (seq raw-text)
+    (let [state @!state
+          last-id (last (collapse/get-visible-root (:root state) (:blocks state)))]
+      (when last-id
+        (let [len (count (get-in state [:blocks last-id :content] ""))]
+          (text-cmd/insert-string !state last-id len raw-text)
+          {:focus-block last-id :offset (+ len (count raw-text))})))))
+
 (defn indent-blocks!
   [!state block-ids]
   (when (seq block-ids)
@@ -390,6 +418,7 @@
    :outdent-block! outdent-block!
    :indent-blocks! indent-blocks!
    :outdent-blocks! outdent-blocks!
+   :indent-selection! indent-selection!
    :delete-cross-block-selection! delete-cross-block-selection!
    :reorder-block! reorder-block!
    :delete-block! delete-block!
@@ -402,4 +431,4 @@
    :duplicate-blocks! duplicate-blocks!
    :execute-slash-command! execute-slash-command!
    :reveal-block! navigate/reveal-block!
-   :paste-when-no-focus! (fn [!state text] nil)})
+   :paste-when-no-focus! paste-when-no-focus!})

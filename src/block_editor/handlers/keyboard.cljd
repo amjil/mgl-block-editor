@@ -3,14 +3,11 @@
    Intercepts hardware keyboard events before they reach the text fields."
   (:require ["package:flutter/material.dart" :as m]
             ["package:flutter/services.dart" :as s]
-            [cljd.flutter :as f]
             [block-editor.utils.collapse :as collapse]
-            [block-editor.utils.history :as history]
             [rich-editor.config :as rich-config]
             [rich-editor.commands.editor-commands :as editor-cmd]
             [rich-editor.commands.text-commands :as text-cmd]
-            [rich-editor.services.clipboard-service :as clipboard]
-            [block-editor.commands.link :as link]
+            [rich-editor.services.ime-service :as ime]
             [shared-ime.controller :as ime-ctrl]))
 
 ;; =============================================================================
@@ -44,7 +41,11 @@
             (do (text-cmd/delete-range !state active-id start (- end start))
                 (editor-cmd/focus-block !state active-id start))
             (if (> start 0)
-              (text-cmd/delete-range !state active-id (dec start) 1)
+              (do
+                (text-cmd/delete-range !state active-id (dec start) 1)
+                (ime/sync-block! !state active-id)
+                (when (empty? (get-in @!state [:blocks active-id :content] ""))
+                  (editor-cmd/focus-block !state active-id 0)))
               (when-let [merge-fn (:merge-with-previous! ops)]
                 (when-let [{:keys [prev-id new-offset]} (merge-fn !state active-id)]
                   (editor-cmd/focus-block !state prev-id new-offset)))))
@@ -118,34 +119,50 @@
           (do (collapse/toggle-collapse! !state (:active-block-id @!state))
               m.KeyEventResult/handled)
 
-          ;; [Cmd/Ctrl + A]: Select all
-          (and is-down? is-ctrl? (= logical-key s.LogicalKeyboardKey/keyA))
-          (do (let [visible (collapse/get-visible-root (:root @!state) (:blocks @!state))]
-                (swap! !state assoc
-                       :selected-block-ids (set visible)
-                       :active-block-id nil
-                       :cursor-visible false))
+          ;; [Cmd/Ctrl + A/Z/C/V/X/K]: host commands (select-all, undo/redo, clipboard, link)
+          (and is-down? is-ctrl?
+               (contains? #{s.LogicalKeyboardKey/keyA
+                            s.LogicalKeyboardKey/keyZ
+                            s.LogicalKeyboardKey/keyY
+                            s.LogicalKeyboardKey/keyC
+                            s.LogicalKeyboardKey/keyV
+                            s.LogicalKeyboardKey/keyX
+                            s.LogicalKeyboardKey/keyK
+                            s.LogicalKeyboardKey/keyB
+                            s.LogicalKeyboardKey/keyI
+                            s.LogicalKeyboardKey/keyU}
+                          logical-key))
+          (do (cond
+                (= logical-key s.LogicalKeyboardKey/keyA)
+                (rich-config/run-command cfg !state :select-all)
+
+                (= logical-key s.LogicalKeyboardKey/keyZ)
+                (rich-config/run-command cfg !state (if is-shift? :redo :undo))
+
+                (= logical-key s.LogicalKeyboardKey/keyY)
+                (rich-config/run-command cfg !state :redo)
+
+                (= logical-key s.LogicalKeyboardKey/keyC)
+                (rich-config/run-command cfg !state :copy)
+
+                (= logical-key s.LogicalKeyboardKey/keyV)
+                (rich-config/run-command cfg !state :paste)
+
+                (= logical-key s.LogicalKeyboardKey/keyX)
+                (rich-config/run-command cfg !state :cut)
+
+                (= logical-key s.LogicalKeyboardKey/keyK)
+                (rich-config/run-command cfg !state :link)
+
+                (= logical-key s.LogicalKeyboardKey/keyB)
+                (rich-config/run-command cfg !state :bold)
+
+                (= logical-key s.LogicalKeyboardKey/keyI)
+                (rich-config/run-command cfg !state :italic)
+
+                (= logical-key s.LogicalKeyboardKey/keyU)
+                (rich-config/run-command cfg !state :underline))
               m.KeyEventResult/handled)
-
-          ;; [Cmd/Ctrl + Z]: Undo
-          (and is-down? is-ctrl? (not is-shift?) (= logical-key s.LogicalKeyboardKey/keyZ))
-          (do (history/undo! !state) m.KeyEventResult/handled)
-
-          ;; [Cmd/Ctrl + Shift + Z]: Redo
-          (and is-down? is-ctrl? is-shift? (= logical-key s.LogicalKeyboardKey/keyZ))
-          (do (history/redo! !state) m.KeyEventResult/handled)
-
-          ;; Clipboard controls
-          (and is-down? is-ctrl? (= logical-key s.LogicalKeyboardKey/keyC))
-          (do (clipboard/copy! @!state) m.KeyEventResult/handled)
-          (and is-down? is-ctrl? (= logical-key s.LogicalKeyboardKey/keyV))
-          (do (clipboard/paste! !state) m.KeyEventResult/handled)
-          (and is-down? is-ctrl? (= logical-key s.LogicalKeyboardKey/keyX))
-          (do (clipboard/cut! !state editor-cmd/delete-global-selection!) m.KeyEventResult/handled)
-
-          ;; [Cmd/Ctrl + K]: Add / edit external hyperlink
-          (and is-down? is-ctrl? (= logical-key s.LogicalKeyboardKey/keyK))
-          (do (link/request-link-dialog! !state) m.KeyEventResult/handled)
 
           ;; ==========================================
           ;; 🌟 Fast cursor navigation logic (Home / End family)
@@ -191,23 +208,11 @@
           (= logical-key s.LogicalKeyboardKey/enter)
           (if is-down? (do (handle-enter-action !state cfg) m.KeyEventResult/handled) m.KeyEventResult/handled)
 
-          ;; Hierarchical indentation with Tab
+          ;; Hierarchical indentation with Tab — same :indent / :outdent commands as shortcuts
           (= logical-key s.LogicalKeyboardKey/tab)
           (if is-down?
-            (let [ops (:block-ops cfg)
-                  selected (:selected-block-ids @!state #{})]
-              (cond
-                (seq selected)
-                (if is-shift?
-                  (when-let [f (:outdent-blocks! ops)] (f !state selected))
-                  (when-let [f (:indent-blocks! ops)] (f !state selected)))
-
-                (:active-block-id @!state)
-                (let [active-id (:active-block-id @!state)]
-                  (if is-shift?
-                    (when-let [f (:outdent-block! ops)] (f !state active-id))
-                    (when-let [f (:indent-block! ops)] (f !state active-id)))))
-              m.KeyEventResult/handled)
+            (do (rich-config/run-command cfg !state (if is-shift? :outdent :indent))
+                m.KeyEventResult/handled)
             m.KeyEventResult/handled)
 
           ;; [Arrow Keys]: Basic adjacent cursor navigation

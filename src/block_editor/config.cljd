@@ -6,7 +6,9 @@
             [rich-editor.defaults :as defaults]
             [block-editor.commands.ops :as ops]
             [block-editor.commands.link :as link]
-            [block-editor.plugins.core :as plugins]))
+            [block-editor.plugins.core :as plugins]
+            [block-editor.utils.history :as history]
+            [block-editor.utils.collapse :as collapse]))
 
 (defn- merge-plugins
   "Defaults first; user plugins override the same `:type`."
@@ -38,11 +40,25 @@
     :text-block-wrappers {}}
    plugin-list))
 
+(defn- host-commands
+  "Commands that must stay on the block-editor history / selection model,
+   rather than the rich-editor defaults (which snapshot a flatter document)."
+  []
+  {:link (fn [!state] (link/request-link-dialog! !state))
+   :undo (fn [!state] (history/undo! !state))
+   :redo (fn [!state] (history/redo! !state))
+   :select-all (fn [!state]
+                 (let [visible (collapse/get-visible-root (:root @!state) (:blocks @!state))]
+                   (swap! !state assoc
+                          :selected-block-ids (set visible)
+                          :active-block-id nil
+                          :cursor-visible false)))})
+
 (defn build-config
   "Merges user custom config with defaults and injects structural block-ops,
    expanded `:block-plugins` (renderers, text types, wrappers).
 
-   Preserved on the result (rich-editor merge drops unknown keys):
+   Host keys pass through rich-editor merge:
    - `:block-ops`
    - `:text-block-wrappers`
    - `:block-plugins`
@@ -55,25 +71,19 @@
         expanded (expand-plugins plugin-list)
         default-text-types (:text-block-types defaults/full-default-config)
         text-types (into (or (:text-block-types user-config) default-text-types #{})
-                         (:text-block-types expanded))
+                         (cons :heading-3 (:text-block-types expanded)))
+        wrappers (merge (:text-block-wrappers expanded)
+                        (:text-block-wrappers user-config {}))
         rich-user (-> user-config
-                      (dissoc :block-plugins :on-link-tap :link-suggestions
-                              :text-block-wrappers :block-ops)
-                      (assoc :text-block-types text-types)
+                      (assoc :text-block-types text-types
+                             :text-block-wrappers wrappers
+                             :block-ops ops/standard-block-ops
+                             :block-plugins plugin-list)
                       (update :custom-block-renderers
                               (fn [crs]
                                 (merge (:custom-block-renderers expanded)
-                                       (or crs {})))))
-        base-merged (rich-config/merge-config defaults/full-default-config rich-user)
-        ;; Plugin wrappers first; user :text-block-wrappers override same types.
-        wrappers (merge (:text-block-wrappers expanded)
-                        (:text-block-wrappers user-config {}))]
-    (assoc base-merged
-           :block-ops ops/standard-block-ops
-           :text-block-wrappers wrappers
-           :block-plugins plugin-list
-           :on-link-tap (:on-link-tap user-config)
-           :link-suggestions (:link-suggestions user-config)
-           ;; Ctrl/Cmd+K → toolbar opens dialog via :pending-ui
-           :commands (assoc (:commands base-merged)
-                            :link (fn [!state] (link/request-link-dialog! !state))))))
+                                       (or crs {}))))
+                      (update :commands
+                              (fn [cmds]
+                                (merge (host-commands) (or cmds {})))))]
+    (rich-config/merge-config defaults/full-default-config rich-user)))
