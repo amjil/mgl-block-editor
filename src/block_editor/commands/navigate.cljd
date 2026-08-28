@@ -9,20 +9,22 @@
    Equivalent: assoc `:scroll-to-block-id` on editor state before/while
    the editor is mounted. The widget consumes the field after layout."
   (:require ["package:flutter/material.dart" :as m]
-            ["dart:async" :as async]))
+            ["dart:async" :as async]
+            [block-editor.runtime :as runtime]))
 
 (def ^:private max-scroll-attempts 10)
 (def ^:private highlight-ms 1800)
 
-(defonce !block-keys (atom {}))
-(defonce ^:private !highlight-timer (atom nil))
+(defn- block-keys-atom [!state]
+  (:!block-keys (runtime/of !state)))
 
 (defn widget-key
-  "Stable GlobalKey for a block column — used by ensureVisible."
-  [id]
-  (get (swap! !block-keys
-              (fn [m] (if (contains? m id) m (assoc m id (m/GlobalKey.)))))
-       id))
+  "Stable GlobalKey for a block column in this editor — used by ensureVisible."
+  [!state id]
+  (let [!keys (block-keys-atom !state)]
+    (get (swap! !keys
+                (fn [m] (if (contains? m id) m (assoc m id (m/GlobalKey.)))))
+         id)))
 
 (defn parent-of
   "Resolve parent id (`:root` for top-level). Uses `:parent` when present,
@@ -79,11 +81,12 @@
 (defn schedule-clear-highlight!
   "Drop the locate flash after a short delay. Restarts if called again."
   [!state block-id]
-  (when-let [t @!highlight-timer]
-    (.cancel ^async/Timer t))
-  (reset! !highlight-timer
-          (async/Timer. (dart:core/Duration. .milliseconds highlight-ms)
-                        #(clear-highlight! !state block-id))))
+  (let [!timer (:!highlight-timer (runtime/of !state))]
+    (when-let [t @!timer]
+      (.cancel ^async/Timer t))
+    (reset! !timer
+            (async/Timer. (dart:core/Duration. .milliseconds highlight-ms)
+                          #(clear-highlight! !state block-id)))))
 
 (defn- jump-toward-root!
   "Lazy ReorderableListView may not have built the target yet. Jump toward
@@ -102,8 +105,8 @@
           (.jumpTo pos target))))))
 
 (defn- block-context
-  [block-id]
-  (when-let [gkey (get @!block-keys block-id)]
+  [!state block-id]
+  (when-let [gkey (get @(block-keys-atom !state) block-id)]
     (.-currentContext gkey)))
 
 (defn scroll-into-view!
@@ -112,7 +115,7 @@
   ([scroll-ctrl !state block-id]
    (scroll-into-view! scroll-ctrl !state block-id 0))
   ([scroll-ctrl !state block-id attempt]
-   (let [ctx (block-context block-id)]
+   (let [ctx (block-context !state block-id)]
      (if ctx
        (do
          (m/Scrollable.ensureVisible

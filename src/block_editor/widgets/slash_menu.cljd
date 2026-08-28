@@ -6,15 +6,14 @@
   (:require ["package:flutter/material.dart" :as m]
             ["package:mongol/mongol.dart" :as mgl]
             [cljd.flutter :as f]
+            [block-editor.runtime :as runtime]
             [block-editor.utils.date :as date]))
 
-;; Bound to the active block via CompositedTransformTarget (see block-tree).
-(defonce !slash-layer-link (atom (m/LayerLink.)))
-
 (defn slash-layer-link
-  "LayerLink shared by slash menu / wikilink autocomplete followers."
-  []
-  @!slash-layer-link)
+  "LayerLink for this editor. Bound to the active block via
+   CompositedTransformTarget (see block-tree)."
+  [!state]
+  (:slash-layer-link (runtime/of !state)))
 
 (def type-commands
   [{:type :paragraph :title "ᠡᠬᠡ ᠪᠢᠴᠢᠭ" :icon m.Icons/notes :keywords ["text" "paragraph" "p"]}
@@ -113,7 +112,7 @@
          ops (:block-ops cfg)]
      (if (and is-active? (seq filtered-items))
        (m/CompositedTransformFollower
-        .link (slash-layer-link)
+        .link (slash-layer-link !state)
         .showWhenUnlinked false
         .offset (m/Offset. 12.0 8.0)
         .child (slash-menu-panel !state active-id filtered-items ops))

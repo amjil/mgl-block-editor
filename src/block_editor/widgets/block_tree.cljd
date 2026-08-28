@@ -46,10 +46,10 @@
 
 (defn- with-slash-anchor
   "Bind LayerLink so slash / autocomplete overlays follow this block."
-  [is-active? child]
+  [!state is-active? child]
   (if is-active?
     (m/CompositedTransformTarget
-     .link (slash-menu/slash-layer-link)
+     .link (slash-menu/slash-layer-link !state)
      .child child)
     child))
 
@@ -67,7 +67,7 @@
         placeholder (get-placeholder-text block-type)]
     (cond
       edit-render
-      (with-slash-anchor is-active? (edit-render id !state idx cfg))
+      (with-slash-anchor !state is-active? (edit-render id !state idx cfg))
 
       is-text?
       (let [list-pad (case block-type
@@ -90,7 +90,7 @@
                                                          (m/TextStyle .color (m/Color 0xFF616161))))))
                 (m/SizedBox.shrink))
               (node-view/block-node id !state idx cfg)])]
-        (with-slash-anchor is-active? text-stack))
+        (with-slash-anchor !state is-active? text-stack))
 
       :else
       (if-let [custom-render (get-in cfg [:custom-block-renderers block-type])]
@@ -188,7 +188,7 @@
      (if-not block
        (m/SizedBox.shrink)
        (m/KeyedSubtree
-      .key (navigate/widget-key id)
+      .key (navigate/widget-key !state id)
       .child
       (m/Column
       .crossAxisAlignment m.CrossAxisAlignment/start

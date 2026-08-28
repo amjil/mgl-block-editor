@@ -1,0 +1,24 @@
+(ns block-editor.runtime
+  "Per-document UI handles. Two editors must not share LayerLink, GlobalKeys,
+   autocomplete state, highlight timers, or marquee throttle."
+  (:require ["package:flutter/material.dart" :as m]))
+
+(defonce ^:private !runtimes (atom {}))
+
+(defn- make-runtime []
+  {:slash-layer-link (m/LayerLink.)
+   :!block-keys (atom {})
+   :!ac-state (atom {:active? false :query "" :block-id nil})
+   :!ac-sniffer-installed (atom false)
+   :!highlight-timer (atom nil)
+   :!marquee-last-intersect-ms (atom 0)})
+
+(defn of
+  "Stable runtime for this editor's state atom. Created once per atom."
+  [!state]
+  (get (swap! !runtimes
+              (fn [m]
+                (if (contains? m !state)
+                  m
+                  (assoc m !state (make-runtime)))))
+       !state))

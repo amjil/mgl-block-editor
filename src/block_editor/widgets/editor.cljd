@@ -7,6 +7,7 @@
             [cljd.flutter :as f]
             
             [block-editor.config :as be-config]
+            [block-editor.runtime :as runtime]
             [block-editor.commands.ops :as be-ops]
             [block-editor.commands.navigate :as navigate]
             [block-editor.handlers.keyboard :as kb-handlers]
@@ -36,7 +37,6 @@
 ;; Marquee selection and edge auto-scroll logic
 ;; -----------------------------------------------------------------------------
 
-(defonce !marquee-last-intersect-ms (atom 0))
 (def ^:private intersect-throttle-ms 50)
 
 (defn- handle-auto-scroll!
@@ -64,9 +64,12 @@
   (when-let [^m/RenderBox container-box (when-let [ctx (.-currentContext container-key)]
                                           (.findRenderObject ctx))]
     (let [keys-map @node-view/!block-text-keys
+          live (set (keys (:blocks @!state {})))
           selected (atom #{})]
       (doseq [[block-id g-key] keys-map]
-        (when-let [ctx (and g-key (.-currentContext g-key))]
+        (when-let [ctx (and (contains? live block-id)
+                            g-key
+                            (.-currentContext g-key))]
           (try
             (let [^m/RenderBox render-box (.findRenderObject ctx)]
               (when render-box
@@ -221,9 +224,10 @@
                      (reset! !select-rect rect)
                      (handle-auto-scroll! scroll-ctrl builder-ctx global-pos)
                      (let [now (dart:core/DateTime.now)
-                           ms (.-millisecondsSinceEpoch now)]
-                       (when (>= (- ms @!marquee-last-intersect-ms) intersect-throttle-ms)
-                         (reset! !marquee-last-intersect-ms ms)
+                           ms (.-millisecondsSinceEpoch now)
+                           !last (:!marquee-last-intersect-ms (runtime/of !state))]
+                       (when (>= (- ms @!last) intersect-throttle-ms)
+                         (reset! !last ms)
                          (handle-selection-intersection! !state rect marquee-key))))))
 
                .onPointerUp
