@@ -43,6 +43,23 @@
                     (:blocks state {}))
               {:parent-id :root :index -1 :siblings root}))))))
 
+(defn- descendant-ids
+  "block-id plus every nested :children id (DFS). Used to recycle a subtree from :blocks."
+  [blocks-map block-id]
+  (letfn [(walk [id]
+            (cons id
+                  (mapcat walk (get-in blocks-map [id :children] []))))]
+    (walk block-id)))
+
+(defn- unlink-block
+  "Remove `block-id` from its parent's `:root` or `:children` list. Does not touch `:blocks`."
+  [state block-id]
+  (let [{:keys [parent-id]} (find-parent-info state block-id)]
+    (if (= parent-id :root)
+      (update state :root #(vec (remove #{block-id} %)))
+      (update-in state [:blocks parent-id :children]
+                 #(vec (remove #{block-id} (or % [])))))))
+
 ;; =============================================================================
 ;; Core Structure Operations (Enter / Backspace)
 ;; =============================================================================
@@ -201,22 +218,18 @@
              (assoc s :root final-root)))))
 
 (defn delete-block! 
-  "Removes a block completely from the document tree."
+  "Removes a block and its entire descendant subtree from the document."
   [!state block-id]
   (history/record-snapshot! !state)
   (swap! !state
          (fn [s]
-           (if-let [{:keys [parent-id]} (find-parent-info s block-id)]
-             (let [;; Remove from parent's list
-                   s1 (if (= parent-id :root)
-                        (update s :root #(vec (remove #{block-id} %)))
-                        (update-in s [:blocks parent-id :children] #(vec (remove #{block-id} %))))
-                   ;; Remove from blocks map
-                   new-state (update s1 :blocks dissoc block-id)]
-               (if (= (:active-block-id s) block-id)
-                 (assoc new-state :active-block-id nil :cursor-visible false)
-                 new-state))
-             s))))
+           (let [gone (set (descendant-ids (:blocks s) block-id))
+                 new-state (-> s
+                               (unlink-block block-id)
+                               (update :blocks #(reduce dissoc % gone)))]
+             (if (contains? gone (:active-block-id s))
+               (assoc new-state :active-block-id nil :cursor-visible false)
+               new-state)))))
 
 (defn duplicate-block! 
   "Copies the block and inserts it immediately after the original as a sibling."
@@ -279,16 +292,21 @@
   [!state block-ids]
   (when (seq block-ids)
     (history/record-snapshot! !state)
-    (doseq [id block-ids]
-      (swap! !state
-             (fn [s]
-               (if-let [{:keys [parent-id]} (find-parent-info s id)]
-                 (let [s1 (if (= parent-id :root)
-                            (update s :root #(vec (remove #{id} %)))
-                            (update-in s [:blocks parent-id :children] #(vec (remove #{id} %))))]
-                   (update s1 :blocks dissoc id))
-                 s))))
-    (swap! !state assoc :selected-block-ids #{} :active-block-id nil :cursor-visible false)))
+    (swap! !state
+           (fn [s]
+             (let [id-set (set block-ids)
+                   gone (into #{} (mapcat #(descendant-ids (:blocks s) %) id-set))
+                   ;; Only unlink selection roots; descendants vanish with the parent.
+                   s1 (reduce (fn [acc id]
+                                (let [parent-id (:parent-id (find-parent-info acc id))]
+                                  (if (contains? gone parent-id)
+                                    acc
+                                    (unlink-block acc id))))
+                              s
+                              id-set)]
+               (-> s1
+                   (update :blocks #(reduce dissoc % gone))
+                   (assoc :selected-block-ids #{} :active-block-id nil :cursor-visible false)))))))
 
 (defn duplicate-blocks! 
   [!state block-ids]
