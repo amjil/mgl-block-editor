@@ -40,6 +40,33 @@
     :else x))
 
 ;; =============================================================================
+;; Tree: :parent is a denormalized pointer; :root / :children are source of truth
+;; =============================================================================
+
+(defn- as-block-id
+  "JSON keys become keywords on decode; block ids must stay strings."
+  [id]
+  (cond
+    (keyword? id) (name id)
+    (nil? id) nil
+    :else (str id)))
+
+(defn- assign-parents
+  "Set `:parent` on every reachable block from `:root` / `:children`.
+   Top-level blocks get `:root`. Tree structure overwrites any stale pointer."
+  [root blocks]
+  (letfn [(visit [acc ids parent]
+            (reduce (fn [acc id]
+                      (if-let [block (get acc id)]
+                        (visit (assoc acc id (assoc block :parent parent))
+                               (mapv as-block-id (:children block []))
+                               id)
+                        acc))
+                    acc
+                    ids))]
+    (visit blocks (mapv as-block-id root) :root)))
+
+;; =============================================================================
 ;; Core API: Export & Import
 ;; =============================================================================
 
@@ -51,7 +78,8 @@
      :blocks {init-id {:id init-id 
                        :type :paragraph 
                        :content "" 
-                       :children []}}
+                       :children []
+                       :parent :root}}
      ;; Inject required UI initial state
      :active-block-id nil
      :selected-block-ids #{}
@@ -62,7 +90,8 @@
   "Purify the !state tree, strip transient UI state, and return a clean JSON string."
   [state-val]
   (let [root (:root state-val [])
-        blocks (:blocks state-val {})
+        ;; Recompute :parent so nested docs round-trip even if in-memory pointers were missing
+        blocks (assign-parents root (:blocks state-val {}))
         ;; 1. Clean each block, dropping transient UI fields like :selection
         clean-blocks
         (reduce-kv
@@ -70,7 +99,8 @@
            (assoc acc id
                   (cond-> {:id id
                            :type (:type block)
-                           :children (:children block [])}
+                           :children (:children block [])
+                           :parent (:parent block :root)}
                     (:content block) (assoc :content (:content block))
                     (seq (:content-spans block)) (assoc :content-spans (:content-spans block))
                     (:data block) (assoc :data (:data block)))))
@@ -90,7 +120,7 @@
   (try
     (let [raw-dart-map (convert/jsonDecode json-str)
           clj-data (from-json-compatible raw-dart-map)
-          root (:root clj-data [])
+          root (mapv as-block-id (:root clj-data []))
           blocks (:blocks clj-data {})
           
           ;; Restore blocks map: turn keywordized block IDs back into Strings
@@ -98,15 +128,21 @@
           (reduce-kv
            (fn [acc id-kw block]
              ;; Block ID must be String "b-xxx"; type must be Keyword :paragraph
-             (let [id-str (if (keyword? id-kw) (name id-kw) (str id-kw))]
-               (assoc acc id-str (update block :type keyword))))
+             (let [id-str (as-block-id id-kw)]
+               (assoc acc id-str
+                      (-> block
+                          (update :type keyword)
+                          (assoc :id id-str)
+                          (update :children #(mapv as-block-id (or % [])))))))
            {}
-           blocks)]
+           blocks)
+          ;; Legacy JSON omitted :parent; always rebuild from the tree
+          blocks-with-parents (assign-parents root restored-blocks)]
       
-      (if (and (seq root) (seq restored-blocks))
+      (if (and (seq root) (seq blocks-with-parents))
         ;; Success: inject full UI runtime state
         {:root (vec root)
-         :blocks restored-blocks
+         :blocks blocks-with-parents
          :active-block-id nil
          :selected-block-ids #{}
          :cursor-visible false

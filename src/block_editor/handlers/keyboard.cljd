@@ -8,7 +8,8 @@
             [rich-editor.commands.editor-commands :as editor-cmd]
             [rich-editor.commands.text-commands :as text-cmd]
             [rich-editor.services.ime-service :as ime]
-            [shared-ime.controller :as ime-ctrl]))
+            [shared-ime.controller :as ime-ctrl]
+            [virtual-keyboard.keyboard-action :as vk-action]))
 
 ;; =============================================================================
 ;; Action Handlers (Backspace & Enter)
@@ -68,7 +69,13 @@
                   (editor-cmd/focus-block !state prev-id prev-len)))))))
       :else nil)))
 
+(defn- dismiss-candidates! []
+  (ime-ctrl/clear-candidates!)
+  (vk-action/clear-candidates)
+  nil)
+
 (defn handle-enter-action [!state cfg]
+  (dismiss-candidates!)
   (let [active-id (:active-block-id @!state)
         ops (:block-ops cfg)
         split-fn (:split-block-at-cursor! ops)]

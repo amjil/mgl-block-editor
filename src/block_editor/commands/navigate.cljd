@@ -24,13 +24,14 @@
               (fn [m] (if (contains? m id) m (assoc m id (m/GlobalKey.)))))
        id))
 
-(defn- parent-of
+(defn parent-of
   "Resolve parent id (`:root` for top-level). Uses `:parent` when present,
-   otherwise scans `:root` / `:children` (legacy docs)."
+   otherwise scans `:root` / `:children` (legacy docs / JSON without :parent).
+   JSON round-trip stores `:root` as the string `\"root\"`."
   [state block-id]
   (let [p (get-in state [:blocks block-id :parent])]
     (cond
-      (= p :root) :root
+      (or (= p :root) (= p "root")) :root
       (and p (get-in state [:blocks p])) p
       (some #(= % block-id) (:root state [])) :root
       :else

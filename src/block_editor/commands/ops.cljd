@@ -17,19 +17,31 @@
 ;; =============================================================================
 
 (defn- find-parent-info 
-  "O(1) locates a block in the tree using the new :parent pointer.
+  "Locates a block in the tree. Prefers the O(1) `:parent` pointer;
+   if missing or stale (`index` -1), scans `:root` / `:children`.
    Returns {:parent-id :index :siblings}."
   [state target-id]
-  (let [block     (get-in state [:blocks target-id])
-        ;; Fallback to :root if :parent is missing (e.g. legacy or mock data)
-        parent-id (get block :parent :root)
+  (let [parent-id (navigate/parent-of state target-id)
         siblings  (if (= parent-id :root)
-                    (:root state)
+                    (:root state [])
                     (get-in state [:blocks parent-id :children] []))
         index     (.indexOf siblings target-id)]
-    {:parent-id parent-id 
-     :index index 
-     :siblings siblings}))
+    (if (>= index 0)
+      {:parent-id parent-id
+       :index index
+       :siblings siblings}
+      ;; Stale `:parent` (e.g. JSON that stored :root while the block lives in :children)
+      (let [root (:root state [])
+            root-idx (.indexOf root target-id)]
+        (if (>= root-idx 0)
+          {:parent-id :root :index root-idx :siblings root}
+          (or (some (fn [[id b]]
+                      (let [chs (:children b [])
+                            idx (.indexOf chs target-id)]
+                        (when (>= idx 0)
+                          {:parent-id id :index idx :siblings chs})))
+                    (:blocks state {}))
+              {:parent-id :root :index -1 :siblings root}))))))
 
 ;; =============================================================================
 ;; Core Structure Operations (Enter / Backspace)
@@ -372,33 +384,23 @@
     (tx/commit-transaction! !state (tx/make-transaction :ops [(tx/update-data-op block-id {:content new-content})] :after-selection nil))
     (editor-cmd/focus-block !state block-id (count new-content))))
 
+(def ^:private slash-atomic-types
+  "Atomic blocks are created from the toolbar, not slash conversion."
+  #{:image :divider :table :bookmark})
+
 (defn- execute-slash-type-change!
+  "Strip the trailing `/query` and convert the current text block.
+   Image / divider / bookmark / table are not slash targets."
   [!state block-id command-type]
-  (history/record-snapshot! !state)
-  (let [state-val @!state
-        block (get-in state-val [:blocks block-id])
-        content (:content block "")
-        slash-idx (.lastIndexOf content "/")]
-    (when (>= slash-idx 0)
-      (text-cmd/delete-range !state block-id slash-idx (- (count content) slash-idx))
-      (let [updated-content (get-in @!state [:blocks block-id :content] "")]
-        (if (and (contains? #{:image :divider :table :bookmark} command-type)
-                 (pos? (count updated-content)))
-          (do
-            (swap! !state
-                   (fn [s]
-                     (let [new-id (str "b-" (random-uuid))
-                           {:keys [parent-id index]} (find-parent-info s block-id)
-                           insert-idx (inc index)
-                           ;; 🌟 Link the new atomic block to the same parent
-                           new-block {:id new-id :type command-type :children [] :parent parent-id}
-                           s1 (assoc-in s [:blocks new-id] new-block)]
-                       (if (= parent-id :root)
-                         (update s1 :root #(vec (concat (subvec % 0 insert-idx) [new-id] (subvec % insert-idx))))
-                         (update-in s1 [:blocks parent-id :children] #(vec (concat (subvec (or % []) 0 insert-idx) [new-id] (subvec (or % []) insert-idx))))))))
-            (let [new-id (last (:root @!state))]
-              (convert-block! !state new-id command-type)))
-          (convert-block! !state block-id command-type))))))
+  (when-not (contains? slash-atomic-types command-type)
+    (history/record-snapshot! !state)
+    (let [state-val @!state
+          block (get-in state-val [:blocks block-id])
+          content (:content block "")
+          slash-idx (.lastIndexOf content "/")]
+      (when (>= slash-idx 0)
+        (text-cmd/delete-range !state block-id slash-idx (- (count content) slash-idx))
+        (swap! !state assoc-in [:blocks block-id :type] command-type)))))
 
 (defn execute-slash-command!
   [!state block-id cmd-or-type]
