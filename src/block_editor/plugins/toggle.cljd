@@ -45,6 +45,8 @@
                  .color (if has-children? m.Colors/black54 m.Colors/black26)))))])))
 
 (defn- render-toggle-read
+  "Read-mode toggle. Use wiki-mongol-text (not -flex): Expanded inside Stack
+   is invalid and fails under horizontal ListView (unbounded width)."
   [block base-style on-link-tap !state]
   (let [collapsed? (:collapsed? block false)
         has-children? (seq (:children block []))
@@ -57,8 +59,8 @@
      .children
      [(m/Container
        .padding (m.EdgeInsets/only .top 28.0)
-       .child (reader/wiki-mongol-text-flex clean (:content-spans block [])
-                                            base-style on-link-tap))
+       .child (reader/wiki-mongol-text clean (:content-spans block [])
+                                       base-style on-link-tap))
 
       (m/GestureDetector
        .behavior m.HitTestBehavior/opaque

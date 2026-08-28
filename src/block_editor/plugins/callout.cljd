@@ -40,6 +40,8 @@
         (m/Text icon-str .style (m/TextStyle .fontSize 20.0)))]))))
 
 (defn- render-callout-read
+  "Read-mode callout. Use wiki-mongol-text (not -flex): Expanded inside Stack
+   is invalid and fails under horizontal ListView (unbounded width)."
   [block base-style on-link-tap _!state]
   (let [clean (inline/strip-properties (or (:content block) ""))
         icon-str (get-in block [:data :icon] default-icon)
@@ -59,8 +61,8 @@
       .children
       [(m/Container
         .padding (m/EdgeInsets.only .top 28.0)
-        .child (reader/wiki-mongol-text-flex clean (:content-spans block [])
-                                             base-style on-link-tap))
+        .child (reader/wiki-mongol-text clean (:content-spans block [])
+                                        base-style on-link-tap))
        
        (m/Padding
         .padding (m/EdgeInsets.only .left icon-left-pad)

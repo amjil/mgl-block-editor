@@ -51,6 +51,8 @@
                 .color (if checked? m.Colors/blue m.Colors/grey))))])))
 
 (defn- render-task-read
+  "Read-mode checkbox. Use wiki-mongol-text (not -flex): Expanded inside Stack
+   is invalid and fails under horizontal ListView (unbounded width)."
   [block base-style on-link-tap !state]
   (let [checked? (block-checked? block)
         clean (inline/strip-properties (or (:content block) ""))
@@ -68,8 +70,8 @@
      .children
      [(m/Container
        .padding (m.EdgeInsets/only .top 28.0)
-       .child (reader/wiki-mongol-text-flex clean (:content-spans block [])
-                                            style on-link-tap))
+       .child (reader/wiki-mongol-text clean (:content-spans block [])
+                                       style on-link-tap))
       
       (m/GestureDetector
        .behavior m.HitTestBehavior/opaque
