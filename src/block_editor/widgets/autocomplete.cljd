@@ -46,7 +46,7 @@
     (when-not @!installed
       (reset! !installed true)
       (add-watch
-       !state :ac-sniffer
+       !state runtime/ac-sniffer-watch
        (fn [_ _ _ new-state]
          (let [cfg (:editor-config new-state)
                suggestions (:link-suggestions cfg)]

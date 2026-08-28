@@ -54,15 +54,17 @@
     child))
 
 (defn- render-edit-content
-  "Active/edit-mode body: plugin :render, text block-node, or custom atomic renderer."
-  [id !state idx cfg block is-active? style]
-  (let [block-type (:type block)
+  "Active/edit-mode body: plugin :render, text block-node, or custom atomic renderer.
+   Uses chrome-snapshot fields — not the live `:content` / `:selection`."
+  [id !state idx cfg snap style]
+  (let [block-type (:type snap)
+        is-active? (:is-active? snap)
         is-text? (rich-config/text-block-type? cfg block-type)
-        is-empty? (empty? (:content block ""))
+        is-empty? (:content-empty? snap)
         plugins (:block-plugins cfg [])
         plugin (reader/find-plugin plugins block-type)
         edit-render (plugin-edit-render plugin)
-        indent-level (get-in block [:attributes :indent] 0)
+        indent-level (get-in snap [:attributes :indent] 0)
         indent-padding (* indent-level 32.0)
         placeholder (get-placeholder-text block-type)]
     (cond
@@ -94,7 +96,7 @@
 
       :else
       (if-let [custom-render (get-in cfg [:custom-block-renderers block-type])]
-        (custom-render id !state idx block style cfg)
+        (custom-render id !state idx (get-in @!state [:blocks id]) style cfg)
         (m/Text (str "Unsupported block type: " (name block-type)))))))
 
 (defn- wiki-text-span-builder
@@ -137,26 +139,36 @@
      :collapsed? (boolean (:collapsed? block false))}))
 
 (defn- chrome-snapshot
-  "Handle / overlay / active-vs-read chrome. Typing elsewhere leaves this equal."
+  "Handle / overlay / active-vs-read chrome.
+
+   Must not include `:content`, `:content-spans`, or `:selection` — those
+   change every keystroke and would rebuild the drag handle and overlays.
+   `:data` is included so inactive task checkboxes / image metadata still
+   refresh without pulling in typed text."
   [state id]
   (let [block (get-in state [:blocks id])
         selected-ids (:selected-block-ids state #{})
         active? (= id (:active-block-id state))]
-    {:block block
-     :is-active? active?
-     :is-multi-select? (boolean (seq selected-ids))
-     :is-block-selected? (contains? selected-ids id)
-     :is-highlighted? (= id (:highlighted-block-id state))
-     :has-children? (boolean (seq (:children block [])))
-     :collapsed? (boolean (:collapsed? block false))}))
+    (when block
+      {:type (:type block)
+       :content-empty? (empty? (:content block ""))
+       :attributes (:attributes block)
+       :data (:data block)
+       :is-active? active?
+       :is-multi-select? (boolean (seq selected-ids))
+       :is-block-selected? (contains? selected-ids id)
+       :is-highlighted? (= id (:highlighted-block-id state))
+       :has-children? (boolean (seq (:children block [])))
+       :collapsed? (boolean (:collapsed? block false))})))
 
 (defn- render-single-block
   [id !state idx cfg show-handles? depth]
   (f/widget
    :watch [snap (f/$ (chrome-snapshot (f/<! !state) id))]
-   (let [block (:block snap)
-         is-active? (:is-active? snap)
-         block-type (:type block)
+   (if-not snap
+     (m/SizedBox.shrink)
+     (let [is-active? (:is-active? snap)
+         block-type (:type snap)
          is-text? (rich-config/text-block-type? cfg block-type)
          style (if is-text? (rich-config/get-block-style cfg block-type) nil)
          exact-col-width (if style (text/get-exact-column-width style) 18.0)
@@ -185,8 +197,6 @@
                (when-let [f (:toggle-block-selection! ops)] (f !state id))
                (show-menu))))]
 
-     (if-not block
-       (m/SizedBox.shrink)
        (m/KeyedSubtree
       .key (navigate/widget-key !state id)
       .child
@@ -254,13 +264,13 @@
          (let [content-widget
                (cond
                  is-active?
-                 (render-edit-content id !state idx cfg block is-active? style)
+                 (render-edit-content id !state idx cfg snap style)
 
                  is-text?
                  (render-inactive-wiki-text id !state idx cfg)
 
                  :else
-                 (render-read-content id !state cfg block))]
+                 (render-read-content id !state cfg (get-in @!state [:blocks id])))]
 
            (m/Stack
             .clipBehavior m.Clip/none

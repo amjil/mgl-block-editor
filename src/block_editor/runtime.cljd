@@ -1,12 +1,21 @@
 (ns block-editor.runtime
   "Per-document UI handles. Two editors must not share LayerLink, GlobalKeys,
-   autocomplete state, highlight timers, or marquee selection atoms."
-  (:require ["package:flutter/material.dart" :as m]))
+   autocomplete state, highlight timers, or marquee selection atoms.
+
+   `of` caches by atom identity. Call `release!` when the editor unmounts or
+   the document atom is discarded — otherwise LayerLink and watches leak."
+  (:require ["package:flutter/material.dart" :as m]
+            ["dart:async" :as async]))
 
 (defonce ^:private !runtimes (atom {}))
 
+(def ac-sniffer-watch
+  "Watch key `install-sniffer!` registers on `!state`. `release!` removes it."
+  :block-editor/ac-sniffer)
+
 (defn- make-runtime []
   {:slash-layer-link (m/LayerLink.)
+   :ime-wrapper-id (str "be-ime-" (random-uuid))
    :!block-keys (atom {})
    :!ac-state (atom {:active? false :query "" :block-id nil})
    :!ac-sniffer-installed (atom false)
@@ -30,7 +39,9 @@
            :!select-rect (atom nil))
     (nil? (:!user-editor-config rt))
     (assoc :!user-editor-config (atom ::unset)
-           :!built-editor-config (atom nil))))
+           :!built-editor-config (atom nil))
+    (nil? (:ime-wrapper-id rt))
+    (assoc :ime-wrapper-id (str "be-ime-" (random-uuid)))))
 
 (defn of
   "Stable runtime for this editor's state atom. Created once per atom."
@@ -42,3 +53,16 @@
                     (if (identical? filled rt) m (assoc m !state filled)))
                   (assoc m !state (make-runtime)))))
        !state))
+
+(defn release!
+  "Drop LayerLink, autocomplete watch, and timers for this state atom.
+   Safe to call if `of` was never used. Hosts that build a custom editor
+   (not `mongol-block-editor`) should call this when the document closes."
+  [!state]
+  (when-let [rt (get @!runtimes !state)]
+    (remove-watch !state ac-sniffer-watch)
+    (when-let [t @(:!highlight-timer rt)]
+      (.cancel ^async/Timer t)
+      (reset! (:!highlight-timer rt) nil))
+    (swap! !runtimes dissoc !state))
+  nil)

@@ -87,7 +87,8 @@
      :history {:undo-stack [] :redo-stack []}}))
 
 (defn export-to-json 
-  "Purify the !state tree, strip transient UI state, and return a clean JSON string."
+  "Purify the !state tree, strip transient UI state, and return a clean JSON string.
+   Persists outline `:collapsed?` with the tree so a round-trip keeps folds."
   [state-val]
   (let [root (:root state-val [])
         ;; Recompute :parent so nested docs round-trip even if in-memory pointers were missing
@@ -103,7 +104,9 @@
                            :parent (:parent block :root)}
                     (:content block) (assoc :content (:content block))
                     (seq (:content-spans block)) (assoc :content-spans (:content-spans block))
-                    (:data block) (assoc :data (:data block)))))
+                    (:data block) (assoc :data (:data block))
+                    ;; Outline fold is document state — round-trip with the tree.
+                    (:collapsed? block) (assoc :collapsed? true))))
          {}
          blocks)
         
@@ -133,7 +136,9 @@
                       (-> block
                           (update :type keyword)
                           (assoc :id id-str)
-                          (update :children #(mapv as-block-id (or % [])))))))
+                          (update :children #(mapv as-block-id (or % [])))
+                          (cond-> (contains? block :collapsed?)
+                            (assoc :collapsed? (boolean (:collapsed? block))))))))
            {}
            blocks)
           ;; Legacy JSON omitted :parent; always rebuild from the tree

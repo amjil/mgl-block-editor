@@ -139,8 +139,9 @@
   "Desktop always installs a shared-ime overlay unless `:wrap-ime?` is false —
    use that when an ancestor already provides `ime-global-wrapper` (e.g. compose
    header fields + editor), otherwise candidates render twice.
-   On mobile, `:wrap-ime?` false also skips the in-editor virtual keyboard so
-   the host page can mount a full-width keyboard."
+   Overlay id is per document atom so two editors on one page do not share a
+   GlobalKey. On mobile, `:wrap-ime?` false also skips the in-editor virtual
+   keyboard so the host page can mount a full-width keyboard."
   [!state & {:keys [editor-config padding background-color show-block-handles?
                     leading-widget toolbar wrap-ime?]
              :or {padding (m/EdgeInsets.all 24.0)
@@ -161,7 +162,10 @@
      :managed [editor-focus-node (m/FocusNode)
                ;; GlobalKey has no .dispose — must opt out of default :dispose.
                marquee-key (m/GlobalKey) :dispose nil
-               scroll-ctrl (m/ScrollController)]
+               scroll-ctrl (m/ScrollController)
+               ;; Release LayerLink / ac-sniffer watch when this editor unmounts
+               ;; or the host swaps in a different document atom.
+               _editor-rt !state :dispose runtime/release! :refresh-on !state]
      :watch [shell (f/$ (let [s (f/<! !state)]
                           {:root (:root s)
                            :active-block-id (:active-block-id s)
@@ -353,5 +357,6 @@
                    (editor-stack shortcut-input !state cfg selecting? select-rect []))
                   (if toolbar toolbar (m/SizedBox.shrink))])]
             (if wrap-ime?
-              (overlay/ime-global-wrapper desktop-body "main-page-ime-wrapper")
+              (overlay/ime-global-wrapper desktop-body
+                                          (or (:ime-wrapper-id rt) "be-ime-fallback"))
               desktop-body))))))))
