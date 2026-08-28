@@ -231,23 +231,26 @@
                (assoc new-state :active-block-id nil :cursor-visible false)
                new-state)))))
 
-(defn duplicate-block! 
+(defn- apply-duplicate
+  "Pure: copy `block-id` and insert the copy as the next sibling. No history."
+  [s block-id]
+  (if-let [{:keys [parent-id index]} (find-parent-info s block-id)]
+    (let [block (get-in s [:blocks block-id])
+          new-id (str "b-" (random-uuid))
+          ;; 🌟 Ensure duplicate block correctly registers its parent
+          new-block (assoc block :id new-id :children [] :parent parent-id)
+          insert-idx (inc index)
+          s1 (assoc-in s [:blocks new-id] new-block)]
+      (if (= parent-id :root)
+        (update s1 :root #(vec (concat (subvec % 0 insert-idx) [new-id] (subvec % insert-idx))))
+        (update-in s1 [:blocks parent-id :children] #(vec (concat (subvec (or % []) 0 insert-idx) [new-id] (subvec (or % []) insert-idx))))))
+    s))
+
+(defn duplicate-block!
   "Copies the block and inserts it immediately after the original as a sibling."
   [!state block-id]
   (history/record-snapshot! !state)
-  (swap! !state
-         (fn [s]
-           (if-let [{:keys [parent-id index]} (find-parent-info s block-id)]
-             (let [block (get-in s [:blocks block-id])
-                   new-id (str "b-" (random-uuid))
-                   ;; 🌟 Ensure duplicate block correctly registers its parent
-                   new-block (assoc block :id new-id :children [] :parent parent-id)
-                   insert-idx (inc index)
-                   s1 (assoc-in s [:blocks new-id] new-block)]
-               (if (= parent-id :root)
-                 (update s1 :root #(vec (concat (subvec % 0 insert-idx) [new-id] (subvec % insert-idx))))
-                 (update-in s1 [:blocks parent-id :children] #(vec (concat (subvec (or % []) 0 insert-idx) [new-id] (subvec (or % []) insert-idx))))))
-             s))))
+  (swap! !state apply-duplicate block-id))
 
 (defn convert-block! 
   "Changes the type of the block."
@@ -308,12 +311,15 @@
                    (update :blocks #(reduce dissoc % gone))
                    (assoc :selected-block-ids #{} :active-block-id nil :cursor-visible false)))))))
 
-(defn duplicate-blocks! 
+(defn duplicate-blocks!
+  "Bulk duplicate. One history snapshot so Undo reverts the whole batch."
   [!state block-ids]
   (when (seq block-ids)
     (history/record-snapshot! !state)
-    (doseq [id block-ids] (duplicate-block! !state id))
-    (swap! !state assoc :selected-block-ids #{})))
+    (swap! !state
+           (fn [s]
+             (-> (reduce apply-duplicate s block-ids)
+                 (assoc :selected-block-ids #{}))))))
 
 (defn indent-selection!
   "Tab / Shift+Tab entry used by rich-editor `:indent` / `:outdent` commands.
