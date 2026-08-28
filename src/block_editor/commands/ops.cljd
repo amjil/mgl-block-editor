@@ -231,23 +231,48 @@
                (assoc new-state :active-block-id nil :cursor-visible false)
                new-state)))))
 
+(defn- clone-subtree
+  "Deep-copy `block-id` and all nested `:children` into `:blocks` with fresh ids.
+   Returns `[new-id state]`. The clone root's `:parent` is `parent-id`.
+   Drops transient `:selection`. Missing blocks are skipped (`nil` id)."
+  [s block-id parent-id]
+  (letfn [(clone [acc id pid]
+            (if-let [block (get-in acc [:blocks id])]
+              (let [new-id (str "b-" (random-uuid))
+                    [child-ids acc']
+                    (reduce (fn [[ids st] child-id]
+                              (let [[cid st'] (clone st child-id new-id)]
+                                (if cid
+                                  [(conj ids cid) st']
+                                  [ids st'])))
+                            [[] acc]
+                            (:children block []))]
+                [new-id
+                 (assoc-in acc' [:blocks new-id]
+                           (-> block
+                               (dissoc :selection)
+                               (assoc :id new-id :parent pid :children child-ids)))])
+              [nil acc]))]
+    (clone s block-id parent-id)))
+
 (defn- apply-duplicate
-  "Pure: copy `block-id` and insert the copy as the next sibling. No history."
+  "Pure: deep-copy `block-id` (and descendants) and insert as the next sibling. No history."
   [s block-id]
   (if-let [{:keys [parent-id index]} (find-parent-info s block-id)]
-    (let [block (get-in s [:blocks block-id])
-          new-id (str "b-" (random-uuid))
-          ;; 🌟 Ensure duplicate block correctly registers its parent
-          new-block (assoc block :id new-id :children [] :parent parent-id)
-          insert-idx (inc index)
-          s1 (assoc-in s [:blocks new-id] new-block)]
-      (if (= parent-id :root)
-        (update s1 :root #(vec (concat (subvec % 0 insert-idx) [new-id] (subvec % insert-idx))))
-        (update-in s1 [:blocks parent-id :children] #(vec (concat (subvec (or % []) 0 insert-idx) [new-id] (subvec (or % []) insert-idx))))))
+    (let [[new-id s1] (clone-subtree s block-id parent-id)
+          insert-idx (inc index)]
+      (if-not new-id
+        s
+        (if (= parent-id :root)
+          (update s1 :root #(vec (concat (subvec % 0 insert-idx) [new-id] (subvec % insert-idx))))
+          (update-in s1 [:blocks parent-id :children]
+                     #(vec (concat (subvec (or % []) 0 insert-idx) [new-id] (subvec (or % []) insert-idx)))))))
     s))
 
 (defn duplicate-block!
-  "Copies the block and inserts it immediately after the original as a sibling."
+  "Deep-copies the block and its nested children, inserting the clone as the next sibling.
+   Each cloned block gets a fresh id; `:parent` / `:children` are rewritten so the copy
+   is an independent subtree."
   [!state block-id]
   (history/record-snapshot! !state)
   (swap! !state apply-duplicate block-id))
@@ -311,14 +336,23 @@
                    (update :blocks #(reduce dissoc % gone))
                    (assoc :selected-block-ids #{} :active-block-id nil :cursor-visible false)))))))
 
+(defn- forest-roots
+  "Among `ids`, drop those whose ancestor is also in the set so a subtree is cloned once."
+  [s ids]
+  (let [id-set (set ids)]
+    (filterv (fn [id]
+               (not (some id-set (navigate/ancestor-ids s id))))
+             ids)))
+
 (defn duplicate-blocks!
-  "Bulk duplicate. One history snapshot so Undo reverts the whole batch."
+  "Bulk duplicate. One history snapshot so Undo reverts the whole batch.
+   Nested selections clone the outer block once (children ride along in the deep copy)."
   [!state block-ids]
   (when (seq block-ids)
     (history/record-snapshot! !state)
     (swap! !state
            (fn [s]
-             (-> (reduce apply-duplicate s block-ids)
+             (-> (reduce apply-duplicate s (forest-roots s block-ids))
                  (assoc :selected-block-ids #{}))))))
 
 (defn indent-selection!
