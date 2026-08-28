@@ -39,6 +39,14 @@
 
 (def available-commands type-commands)
 
+(def ^:private slash-token-re #"/([a-zA-Z0-9]*)$")
+
+(defn slash-query
+  "Trailing `/query` after the last slash, or nil when the menu should be closed."
+  [content]
+  (when-let [match (re-find slash-token-re (or content ""))]
+    (second match)))
+
 (defn- filter-commands [query]
   (let [q (.toLowerCase query)
         cmds (all-commands)]
@@ -49,35 +57,53 @@
                     (some #(clojure.string/includes? % q) keywords)))
               cmds))))
 
-(defn- slash-item-widget [!state active-id ops item]
+(defn matching-commands
+  [query]
+  (vec (filter-commands (or query ""))))
+
+(defn selected-slash-command
+  "Command Enter should confirm while the slash menu is open. Nil if closed / empty."
+  [!state]
+  (let [active-id (:active-block-id @!state)
+        content (if active-id (get-in @!state [:blocks active-id :content] "") "")
+        query (slash-query content)]
+    (when query
+      (first (matching-commands query)))))
+
+(defn- slash-item-widget [!state active-id ops item selected?]
   (let [{:keys [title icon]} item]
     (m/InkWell
      .onTap (fn []
               (when-let [execute-fn (:execute-slash-command! ops)]
                 (execute-fn !state active-id item)))
      .child
-     (m/Padding
-      .padding (m.EdgeInsets/symmetric .horizontal 16.0 .vertical 16.0)
+     (m/Container
+      .decoration (when selected?
+                    (m/BoxDecoration
+                     .color (-> m.Colors/blue (.withOpacity 0.08))))
       .child
-      (m/Column
-       .mainAxisAlignment m.MainAxisAlignment/start
-       .mainAxisSize m.MainAxisSize/min
-       .children
-       [(m/Container
-         .padding (m.EdgeInsets/all 8.0)
-         .decoration (m/BoxDecoration
-                      .color (-> m.Colors/grey (.withOpacity 0.1))
-                      .shape m.BoxShape/circle)
-         .child (m/Icon icon .color m.Colors/black87 .size 20.0))
-        (m/SizedBox .height 12.0)
-        (m/Flexible
-         .child
-         (mgl/MongolText
-          title
-          .style (m/TextStyle
-                  .fontWeight m.FontWeight/w500
-                  .fontSize 15.0
-                  .color m.Colors/black87)))])))))
+      (m/Padding
+       .padding (m.EdgeInsets/symmetric .horizontal 16.0 .vertical 16.0)
+       .child
+       (m/Column
+        .mainAxisAlignment m.MainAxisAlignment/start
+        .mainAxisSize m.MainAxisSize/min
+        .children
+        [(m/Container
+          .padding (m.EdgeInsets/all 8.0)
+          .decoration (m/BoxDecoration
+                       .color (-> m.Colors/grey (.withOpacity 0.1))
+                       .shape m.BoxShape/circle)
+          .child (m/Icon icon .color m.Colors/black87 .size 20.0))
+         (m/SizedBox .height 12.0)
+         (m/Flexible
+          .child
+          (mgl/MongolText
+           title
+           .style (m/TextStyle
+                   .fontWeight m.FontWeight/w500
+                   .fontSize 15.0
+                   .color m.Colors/black87)))]))))))
 
 (defn- slash-menu-panel [!state active-id filtered-items ops]
   (m/Material
@@ -96,7 +122,11 @@
       .mainAxisSize m.MainAxisSize/min
       .crossAxisAlignment m.CrossAxisAlignment/start
       .children
-      (mapv #(slash-item-widget !state active-id ops %) filtered-items))))))
+      (into []
+            (map-indexed
+             (fn [i item]
+               (slash-item-widget !state active-id ops item (zero? i)))
+             filtered-items)))))))
 
 (defn slash-overlay
   "Follows the active block via LayerLink when content ends with `/[query]`."
@@ -105,12 +135,10 @@
    :watch [state-val !state]
    (let [active-id (:active-block-id state-val)
          content (if active-id (get-in state-val [:blocks active-id :content] "") "")
-         match (re-find #"/([a-zA-Z0-9]*)$" content)
-         is-active? (some? match)
-         query (if match (second match) "")
-         filtered-items (filter-commands query)
+         query (slash-query content)
+         filtered-items (when query (matching-commands query))
          ops (:block-ops cfg)]
-     (if (and is-active? (seq filtered-items))
+     (if (seq filtered-items)
        (m/CompositedTransformFollower
         .link (slash-layer-link !state)
         .showWhenUnlinked false

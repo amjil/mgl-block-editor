@@ -4,6 +4,7 @@
   (:require ["package:flutter/material.dart" :as m]
             ["package:flutter/services.dart" :as s]
             [block-editor.utils.collapse :as collapse]
+            [block-editor.widgets.slash-menu :as slash-menu]
             [rich-editor.config :as rich-config]
             [rich-editor.commands.editor-commands :as editor-cmd]
             [rich-editor.commands.text-commands :as text-cmd]
@@ -78,11 +79,16 @@
   (dismiss-candidates!)
   (let [active-id (:active-block-id @!state)
         ops (:block-ops cfg)
+        execute-fn (:execute-slash-command! ops)
+        slash-cmd (when (and active-id execute-fn)
+                    (slash-menu/selected-slash-command !state))
         split-fn (:split-block-at-cursor! ops)]
-    (when (and active-id split-fn)
-      (split-fn !state active-id)
-      (let [new-id (:active-block-id @!state)]
-        (editor-cmd/focus-block !state new-id 0)))))
+    (if slash-cmd
+      (execute-fn !state active-id slash-cmd)
+      (when (and active-id split-fn)
+        (split-fn !state active-id)
+        (let [new-id (:active-block-id @!state)]
+          (editor-cmd/focus-block !state new-id 0))))))
 
 ;; =============================================================================
 ;; Main Keyboard Event Interceptor

@@ -5,12 +5,10 @@
    Maintains an O(1) :parent pointer on all blocks for ultra-fast structural lookups."
   (:require [rich-editor.commands.text-commands :as text-cmd]
             [rich-editor.commands.editor-commands :as editor-cmd]
-            [rich-editor.commands.transaction :as tx]
             [block-editor.utils.collapse :as collapse]
             [block-editor.utils.history :as history]
             [block-editor.commands.navigate :as navigate]
-            ["package:flutter/material.dart" :as m]
-            [clojure.string :as str]))
+            ["package:flutter/material.dart" :as m]))
 
 ;; =============================================================================
 ;; Tree Traversal Helpers
@@ -432,15 +430,24 @@
 ;; Slash Command Execution
 ;; =============================================================================
 
+(defn- trailing-slash-token
+  "Start index and length of a trailing `/query`, or nil."
+  [content]
+  (when-let [m (re-find #"/([a-zA-Z0-9]*)$" (or content ""))]
+    (let [token (first m)]
+      [(- (count content) (count token)) (count token)])))
+
 (defn- execute-slash-insert!
+  "Replace the trailing `/query` with `value` via delete-range + insert-string
+   so `:content-spans` stay aligned."
   [!state block-id cmd]
   (history/record-snapshot! !state)
-  (let [block (get-in @!state [:blocks block-id])
-        old-content (or (:content block) "")
-        value (if (:value-fn cmd) ((:value-fn cmd)) (:value cmd ""))
-        new-content (str/replace old-content #"/[a-zA-Z0-9]*$" value)]
-    (tx/commit-transaction! !state (tx/make-transaction :ops [(tx/update-data-op block-id {:content new-content})] :after-selection nil))
-    (editor-cmd/focus-block !state block-id (count new-content))))
+  (let [content (get-in @!state [:blocks block-id :content] "")
+        value (if (:value-fn cmd) ((:value-fn cmd)) (:value cmd ""))]
+    (when-let [[start len] (trailing-slash-token content)]
+      (text-cmd/delete-range !state block-id start len)
+      (text-cmd/insert-string !state block-id start value)
+      (editor-cmd/focus-block !state block-id (+ start (count value))))))
 
 (def ^:private slash-atomic-types
   "Atomic blocks are created from the toolbar, not slash conversion."
@@ -452,12 +459,9 @@
   [!state block-id command-type]
   (when-not (contains? slash-atomic-types command-type)
     (history/record-snapshot! !state)
-    (let [state-val @!state
-          block (get-in state-val [:blocks block-id])
-          content (:content block "")
-          slash-idx (.lastIndexOf content "/")]
-      (when (>= slash-idx 0)
-        (text-cmd/delete-range !state block-id slash-idx (- (count content) slash-idx))
+    (let [content (get-in @!state [:blocks block-id :content] "")]
+      (when-let [[start len] (trailing-slash-token content)]
+        (text-cmd/delete-range !state block-id start len)
         (swap! !state assoc-in [:blocks block-id :type] command-type)))))
 
 (defn execute-slash-command!
