@@ -114,6 +114,23 @@
                  extras
                  [(selection-bar/bulk-action-bar !state)])))))
 
+(defn- resolved-config
+  "Reuse the last `build-config` result while `editor-config` is `identical?`.
+   Only `assoc`s `:editor-config` onto `!state` when the built map is new,
+   so a parent watching the same atom is not pulled into a rebuild loop."
+  [!state editor-config]
+  (let [rt (runtime/of !state)
+        !in (:!user-editor-config rt)
+        !out (:!built-editor-config rt)]
+    (if (identical? @!in editor-config)
+      @!out
+      (let [cfg (be-config/build-config editor-config)]
+        (reset! !in editor-config)
+        (reset! !out cfg)
+        (when-not (identical? (:editor-config @!state) cfg)
+          (swap! !state assoc :editor-config cfg))
+        cfg))))
+
 ;; -----------------------------------------------------------------------------
 ;; Editor Main Widget
 ;; -----------------------------------------------------------------------------
@@ -131,13 +148,13 @@
                   show-block-handles? false
                   wrap-ime? true}}]
   
-  (let [cfg (be-config/build-config editor-config)
+  (let [cfg (resolved-config !state editor-config)
         ops (:block-ops cfg)
-        !selecting? (atom false)
-        !select-start (atom nil)
-        !select-rect (atom nil)]
+        rt (runtime/of !state)
+        !selecting? (:!selecting? rt)
+        !select-start (:!select-start rt)
+        !select-rect (:!select-rect rt)]
 
-    (swap! !state assoc :editor-config cfg)
     (autocomplete/install-sniffer! !state)
 
     (f/widget

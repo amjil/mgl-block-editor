@@ -1,6 +1,6 @@
 (ns block-editor.runtime
   "Per-document UI handles. Two editors must not share LayerLink, GlobalKeys,
-   autocomplete state, highlight timers, or marquee throttle."
+   autocomplete state, highlight timers, or marquee selection atoms."
   (:require ["package:flutter/material.dart" :as m]))
 
 (defonce ^:private !runtimes (atom {}))
@@ -11,14 +11,34 @@
    :!ac-state (atom {:active? false :query "" :block-id nil})
    :!ac-sniffer-installed (atom false)
    :!highlight-timer (atom nil)
-   :!marquee-last-intersect-ms (atom 0)})
+   :!marquee-last-intersect-ms (atom 0)
+   :!selecting? (atom false)
+   :!select-start (atom nil)
+   :!select-rect (atom nil)
+   ;; Cache build-config input/output so parent rebuilds do not re-assoc
+   ;; `:editor-config` onto `!state` (that retriggers every state watch).
+   :!user-editor-config (atom ::unset)
+   :!built-editor-config (atom nil)})
+
+(defn- fill-runtime
+  "Keep long-lived runtimes compatible when new keys are added."
+  [rt]
+  (cond-> rt
+    (nil? (:!selecting? rt))
+    (assoc :!selecting? (atom false)
+           :!select-start (atom nil)
+           :!select-rect (atom nil))
+    (nil? (:!user-editor-config rt))
+    (assoc :!user-editor-config (atom ::unset)
+           :!built-editor-config (atom nil))))
 
 (defn of
   "Stable runtime for this editor's state atom. Created once per atom."
   [!state]
   (get (swap! !runtimes
               (fn [m]
-                (if (contains? m !state)
-                  m
+                (if-let [rt (get m !state)]
+                  (let [filled (fill-runtime rt)]
+                    (if (identical? filled rt) m (assoc m !state filled)))
                   (assoc m !state (make-runtime)))))
        !state))
