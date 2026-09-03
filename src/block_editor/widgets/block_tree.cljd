@@ -119,17 +119,20 @@
                                :wiki-target-at highlighter/wiki-target-at)))
 
 (defn- render-read-content
-  "Inactive atomic/read-mode body: static reader; tap focuses the block."
+  "Inactive atomic/read-mode body: static reader; tap focuses the block
+   unless the editor is in `:read-only?` preview mode."
   [id !state cfg block]
   (let [plugins (:block-plugins cfg [])
-        on-link-tap (:on-link-tap cfg)]
-    (m/GestureDetector
-     .behavior m.HitTestBehavior/opaque
-     .onTap #(editor-cmd/focus-block !state id 0)
-     .child
-     (m/Container
-      .key (ensure-block-key id)
-      .child (reader/block-reader-view block plugins cfg on-link-tap !state)))))
+        on-link-tap (:on-link-tap cfg)
+        body (m/Container
+              .key (ensure-block-key id)
+              .child (reader/block-reader-view block plugins cfg on-link-tap !state))]
+    (if (:read-only? cfg)
+      body
+      (m/GestureDetector
+       .behavior m.HitTestBehavior/opaque
+       .onTap #(editor-cmd/focus-block !state id 0)
+       .child body))))
 
 (defn- subtree-snapshot
   "Children list + collapse. Typing in this block leaves this equal."
@@ -258,11 +261,15 @@
          ;; Reduce right-side spacing for consistency with mobile.
          .padding (m.EdgeInsets/only .right 10.0)
          .child
+         ;; Preview (`:read-only?`) → always static reader (no IME / focus).
          ;; Active text → editable node-view.
          ;; Inactive text → same selectable mount with wiki spans (link taps +
          ;; cross-block drag hit-testing). Atomic inactive → static read-mode.
          (let [content-widget
                (cond
+                 (:read-only? cfg)
+                 (render-read-content id !state cfg (get-in @!state [:blocks id]))
+
                  is-active?
                  (render-edit-content id !state idx cfg snap style)
 

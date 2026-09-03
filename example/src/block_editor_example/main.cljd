@@ -129,6 +129,14 @@
    :show-block-handles? true
    :padding (m.EdgeInsets/all 32.0)))
 
+(defn- reader-body [!state]
+  (editor/mongol-block-editor
+   !state
+   :editor-config my-editor-config
+   :read-only? true
+   :background-color (m/Color 0xFF121212)
+   :padding (m.EdgeInsets/all 32.0)))
+
 (defn editor-screen []
   (let [!save-timer (atom nil)]
     (f/widget
@@ -148,6 +156,28 @@
                  .foregroundColor (m/Color 0xFFF5F5F5))
         .body
         (m/SafeArea .child (editor-body !doc-state)))))))
+
+(defn reader-screen []
+  (f/widget
+   (m/Scaffold
+    .backgroundColor (m/Color 0xFF121212)
+    .appBar (m/AppBar
+             .title (m/Text "Document Reader")
+             .elevation 0.0
+             .backgroundColor (m/Color 0xFF1E1E1E)
+             .foregroundColor (m/Color 0xFFF5F5F5)
+             .actions
+             [;; Exercise horizontal scroll + highlight in document-reader.
+              (m/IconButton
+               .tooltip "Scroll to image"
+               .icon (m/Icon m.Icons/image_outlined)
+               .onPressed #(navigate/reveal-block! !doc-state "b-3"))
+              (m/IconButton
+               .tooltip "Scroll to nested child"
+               .icon (m/Icon m.Icons/subdirectory_arrow_right)
+               .onPressed #(navigate/reveal-block! !doc-state "b-1a1"))])
+    .body
+    (m/SafeArea .child (reader-body !doc-state)))))
 
 (def ^:private search-hits
   [{:block-id "b-1a1"
@@ -249,6 +279,10 @@
       [(home-button "Editor"
                     "Normal editing, persistence, toolbar"
                     #(push-page! ctx (editor-screen)))
+       (m/SizedBox .height 16.0)
+       (home-button "Document reader"
+                    "Read-only preview: wiki links, tasks, scroll-to-block"
+                    #(push-page! ctx (reader-screen)))
        (m/SizedBox .height 16.0)
        (home-button "Search locate"
                     "Open a page from a search hit and scroll to the block"

@@ -12,6 +12,7 @@
             [block-editor.commands.navigate :as navigate]
             [block-editor.handlers.keyboard :as kb-handlers]
             [block-editor.widgets.block-tree :as block-tree]
+            [block-editor.widgets.reader :as reader]
             [block-editor.widgets.slash-menu :as slash-menu]
             [block-editor.widgets.autocomplete :as autocomplete]
             [block-editor.widgets.selection-bar :as selection-bar]
@@ -141,13 +142,16 @@
    header fields + editor), otherwise candidates render twice.
    Overlay id is per document atom so two editors on one page do not share a
    GlobalKey. On mobile, `:wrap-ime?` false also skips the in-editor virtual
-   keyboard so the host page can mount a full-width keyboard."
+   keyboard so the host page can mount a full-width keyboard.
+
+   `:read-only?` true mounts `document-reader` (static preview, no IME)."
   [!state & {:keys [editor-config padding background-color show-block-handles?
-                    leading-widget toolbar wrap-ime?]
+                    leading-widget toolbar wrap-ime? read-only?]
              :or {padding (m/EdgeInsets.all 24.0)
                   background-color m/Colors.transparent
                   show-block-handles? false
-                  wrap-ime? true}}]
+                  wrap-ime? true
+                  read-only? false}}]
   
   (let [cfg (resolved-config !state editor-config)
         ops (:block-ops cfg)
@@ -156,207 +160,216 @@
         !select-start (:!select-start rt)
         !select-rect (:!select-rect rt)]
 
-    (autocomplete/install-sniffer! !state)
+    (if read-only?
+      (do
+        (when (or (:active-block-id @!state) (:cursor-visible @!state))
+          (editor-cmd/blur-all !state))
+        (reader/document-reader !state cfg
+                                :padding padding
+                                :background-color background-color))
 
-    (f/widget
-     :managed [editor-focus-node (m/FocusNode)
-               ;; GlobalKey has no .dispose — must opt out of default :dispose.
-               marquee-key (m/GlobalKey) :dispose nil
-               scroll-ctrl (m/ScrollController)
-               ;; Release LayerLink / ac-sniffer watch when this editor unmounts
-               ;; or the host swaps in a different document atom.
-               _editor-rt !state :dispose runtime/release! :refresh-on !state]
-     :watch [shell (f/$ (let [s (f/<! !state)]
-                          {:root (:root s)
-                           :active-block-id (:active-block-id s)
-                           :has-kb? (boolean (or (:active-block-id s)
-                                                 (:external-keyboard-delegate s)))
-                           :scroll-to-block-id (:scroll-to-block-id s)}))
-             selecting? !selecting?
-             select-rect !select-rect]
+      (do
+        (autocomplete/install-sniffer! !state)
 
-     (let [root-ids (:root shell)
-           _ (node-view/sync-text-keys! @!state)
+        (f/widget
+         :managed [editor-focus-node (m/FocusNode)
+                   ;; GlobalKey has no .dispose — must opt out of default :dispose.
+                   marquee-key (m/GlobalKey) :dispose nil
+                   scroll-ctrl (m/ScrollController)
+                   ;; Release LayerLink / ac-sniffer watch when this editor unmounts
+                   ;; or the host swaps in a different document atom.
+                   _editor-rt !state :dispose runtime/release! :refresh-on !state]
+         :watch [shell (f/$ (let [s (f/<! !state)]
+                              {:root (:root s)
+                               :active-block-id (:active-block-id s)
+                               :has-kb? (boolean (or (:active-block-id s)
+                                                     (:external-keyboard-delegate s)))
+                               :scroll-to-block-id (:scroll-to-block-id s)}))
+                 selecting? !selecting?
+                 select-rect !select-rect]
 
-           ;; Host set `:scroll-to-block-id` (via `reveal-block!` or assoc).
-           ;; Consume after this frame so keys/layout exist; ignore duplicates.
-           _ (do
-               (when-let [id (:scroll-to-block-id shell)]
-                 (m/WidgetsBinding.instance.addPostFrameCallback
-                  (fn [_]
-                    (when (= id (:scroll-to-block-id @!state))
-                      (navigate/consume-scroll-request! scroll-ctrl !state id))))
-                 nil)
-               nil)
+         (let [root-ids (:root shell)
+               _ (node-view/sync-text-keys! @!state)
 
-           block-list
-           (m/ReorderableListView.builder
-            .scrollController scroll-ctrl
-            .scrollDirection m/Axis.horizontal
-            .padding padding
-            .buildDefaultDragHandles false
-            .onReorder (fn [^int old-idx ^int new-idx]
-                         (when-let [reorder-fn (:reorder-block! ops)]
-                           (reorder-fn !state old-idx new-idx)))
-            .proxyDecorator (fn [^m/Widget child ^int index ^m/Animation animation]
-                              (m/AnimatedBuilder
-                               .animation animation
-                               .builder (fn [ctx _]
-                                          (let [anim-val (.-value animation)
-                                                rotation (* anim-val 0.035)
-                                                scale (+ 1.0 (* anim-val 0.03))]
-                                            (m/Transform
-                                             .alignment m/Alignment.center
-                                             .transform (-> (m/Matrix4.identity) (.scale scale scale) (.rotateZ rotation))
-                                             .child
-                                             (m/Material .elevation (* 12.0 anim-val) .color m/Colors.transparent .shadowColor m/Colors.black38 .child child))))))
-            .itemCount (count root-ids)
-            .itemBuilder
-            (fn [^m/BuildContext ctx ^int idx]
-              (let [id (nth root-ids idx)]
-                (m/KeyedSubtree
-                 .key (m/ValueKey id)
-                 .child (block-tree/block-subtree id !state idx cfg show-block-handles? 0)))))
+               ;; Host set `:scroll-to-block-id` (via `reveal-block!` or assoc).
+               ;; Consume after this frame so keys/layout exist; ignore duplicates.
+               _ (do
+                   (when-let [id (:scroll-to-block-id shell)]
+                     (m/WidgetsBinding.instance.addPostFrameCallback
+                      (fn [_]
+                        (when (= id (:scroll-to-block-id @!state))
+                          (navigate/consume-scroll-request! scroll-ctrl !state id))))
+                     nil)
+                   nil)
 
-           interactive-area
-           (m/Builder
-            .builder
-            (fn [^m/BuildContext builder-ctx]
-              ;; Shift+drag: marquee. Otherwise requestFocus so shared-ime gets key events.
-              (m/Listener
-               .behavior m/HitTestBehavior.translucent
-               .onPointerDown
-               (fn [e]
-                 (if (.-isShiftPressed (.-instance s/HardwareKeyboard))
-                   (let [pos (.-localPosition e)]
-                     (reset! !selecting? true)
-                     (reset! !select-start pos)
-                     (reset! !select-rect (m/Rect.fromPoints pos pos))
-                     (swap! !state assoc :selected-block-ids #{}))
-                   (.requestFocus editor-focus-node)))
+               block-list
+               (m/ReorderableListView.builder
+                .scrollController scroll-ctrl
+                .scrollDirection m/Axis.horizontal
+                .padding padding
+                .buildDefaultDragHandles false
+                .onReorder (fn [^int old-idx ^int new-idx]
+                             (when-let [reorder-fn (:reorder-block! ops)]
+                               (reorder-fn !state old-idx new-idx)))
+                .proxyDecorator (fn [^m/Widget child ^int index ^m/Animation animation]
+                                  (m/AnimatedBuilder
+                                   .animation animation
+                                   .builder (fn [ctx _]
+                                              (let [anim-val (.-value animation)
+                                                    rotation (* anim-val 0.035)
+                                                    scale (+ 1.0 (* anim-val 0.03))]
+                                                (m/Transform
+                                                 .alignment m/Alignment.center
+                                                 .transform (-> (m/Matrix4.identity) (.scale scale scale) (.rotateZ rotation))
+                                                 .child
+                                                 (m/Material .elevation (* 12.0 anim-val) .color m/Colors.transparent .shadowColor m/Colors.black38 .child child))))))
+                .itemCount (count root-ids)
+                .itemBuilder
+                (fn [^m/BuildContext ctx ^int idx]
+                  (let [id (nth root-ids idx)]
+                    (m/KeyedSubtree
+                     .key (m/ValueKey id)
+                     .child (block-tree/block-subtree id !state idx cfg show-block-handles? 0)))))
 
-               .onPointerMove
-               (fn [e]
-                 (when @!selecting?
-                   (let [local-pos (.-localPosition e)
-                         global-pos (.-position e)
-                         start @!select-start
-                         rect (m/Rect.fromPoints start local-pos)]
-                     (reset! !select-rect rect)
-                     (handle-auto-scroll! scroll-ctrl builder-ctx global-pos)
-                     (let [now (dart:core/DateTime.now)
-                           ms (.-millisecondsSinceEpoch now)
-                           !last (:!marquee-last-intersect-ms (runtime/of !state))]
-                       (when (>= (- ms @!last) intersect-throttle-ms)
-                         (reset! !last ms)
-                         (handle-selection-intersection! !state rect marquee-key))))))
+               interactive-area
+               (m/Builder
+                .builder
+                (fn [^m/BuildContext builder-ctx]
+                  ;; Shift+drag: marquee. Otherwise requestFocus so shared-ime gets key events.
+                  (m/Listener
+                   .behavior m/HitTestBehavior.translucent
+                   .onPointerDown
+                   (fn [e]
+                     (if (.-isShiftPressed (.-instance s/HardwareKeyboard))
+                       (let [pos (.-localPosition e)]
+                         (reset! !selecting? true)
+                         (reset! !select-start pos)
+                         (reset! !select-rect (m/Rect.fromPoints pos pos))
+                         (swap! !state assoc :selected-block-ids #{}))
+                       (.requestFocus editor-focus-node)))
 
-               .onPointerUp
-               (fn [_]
-                 (reset! !selecting? false)
-                 (reset! !select-start nil)
-                 (reset! !select-rect nil)
-                 (m/WidgetsBinding.instance.addPostFrameCallback
-                  (fn [_]
-                    (try
-                      (.requestFocus editor-focus-node)
-                      (catch Exception _)))))
+                   .onPointerMove
+                   (fn [e]
+                     (when @!selecting?
+                       (let [local-pos (.-localPosition e)
+                             global-pos (.-position e)
+                             start @!select-start
+                             rect (m/Rect.fromPoints start local-pos)]
+                         (reset! !select-rect rect)
+                         (handle-auto-scroll! scroll-ctrl builder-ctx global-pos)
+                         (let [now (dart:core/DateTime.now)
+                               ms (.-millisecondsSinceEpoch now)
+                               !last (:!marquee-last-intersect-ms (runtime/of !state))]
+                           (when (>= (- ms @!last) intersect-throttle-ms)
+                             (reset! !last ms)
+                             (handle-selection-intersection! !state rect marquee-key))))))
 
-               .onPointerCancel
-               (fn [_]
-                 (reset! !selecting? false)
-                 (reset! !select-start nil)
-                 (reset! !select-rect nil))
+                   .onPointerUp
+                   (fn [_]
+                     (reset! !selecting? false)
+                     (reset! !select-start nil)
+                     (reset! !select-rect nil)
+                     (m/WidgetsBinding.instance.addPostFrameCallback
+                      (fn [_]
+                        (try
+                          (.requestFocus editor-focus-node)
+                          (catch Exception _)))))
 
-               .child
-               (m/GestureDetector
-                .behavior m/HitTestBehavior.translucent
-                ;; Tap empty canvas area to focus the last block for smoother editing
-                .onTap (fn []
-                         (when-not (:active-block-id @!state)
-                           (when-let [last-id (last (:root @!state))]
-                             (let [len (count (get-in @!state [:blocks last-id :content] ""))]
-                               (editor-cmd/focus-block !state last-id len)))))
-                .child
-                (m/KeyedSubtree
-                 .key marquee-key
-                 .child block-list)))))
+                   .onPointerCancel
+                   (fn [_]
+                     (reset! !selecting? false)
+                     (reset! !select-start nil)
+                     (reset! !select-rect nil))
 
-           core-input-area
-           (m/Focus
-            .focusNode editor-focus-node
-            .onFocusChange
-            (fn [has-focus?]
-              (if has-focus?
-                (do
-                  (ime/bind-focus-node! !state editor-focus-node)
-                  (swap! !state assoc :external-keyboard-delegate nil :cursor-visible true)
-                  (when-let [target-id (or (:active-block-id @!state) (last (:root @!state)))]
-                    (let [sel (get-in @!state [:blocks target-id :selection])
-                          offset (if sel (.-extentOffset sel) (count (get-in @!state [:blocks target-id :content] "")))]
-                      (editor-cmd/focus-block !state target-id offset))))
-                (ime/schedule-detach-if-unfocused! editor-focus-node !state)))
-            .onKeyEvent (fn [node event] (kb-handlers/handle-key-event cfg !state node event))
-            .child interactive-area)
+                   .child
+                   (m/GestureDetector
+                    .behavior m/HitTestBehavior.translucent
+                    ;; Tap empty canvas area to focus the last block for smoother editing
+                    .onTap (fn []
+                             (when-not (:active-block-id @!state)
+                               (when-let [last-id (last (:root @!state))]
+                                 (let [len (count (get-in @!state [:blocks last-id :content] ""))]
+                                   (editor-cmd/focus-block !state last-id len)))))
+                    .child
+                    (m/KeyedSubtree
+                     .key marquee-key
+                     .child block-list)))))
 
-           shortcut-input
-           (m/CallbackShortcuts
-            .bindings (rich-config/shortcut-bindings cfg !state)
-            .child core-input-area)]
+               core-input-area
+               (m/Focus
+                .focusNode editor-focus-node
+                .onFocusChange
+                (fn [has-focus?]
+                  (if has-focus?
+                    (do
+                      (ime/bind-focus-node! !state editor-focus-node)
+                      (swap! !state assoc :external-keyboard-delegate nil :cursor-visible true)
+                      (when-let [target-id (or (:active-block-id @!state) (last (:root @!state)))]
+                        (let [sel (get-in @!state [:blocks target-id :selection])
+                              offset (if sel (.-extentOffset sel) (count (get-in @!state [:blocks target-id :content] "")))]
+                          (editor-cmd/focus-block !state target-id offset))))
+                    (ime/schedule-detach-if-unfocused! editor-focus-node !state)))
+                .onKeyEvent (fn [node event] (kb-handlers/handle-key-event cfg !state node event))
+                .child interactive-area)
 
-       (m/Container
-        .color background-color
-        .child
-        (if (is-mobile?)
-          (if wrap-ime?
-            (f/widget
-             :let [info (merge options/keyboard-option
-                               {:keyboard/mongol-font-family "OyunQaganTig"
-                                :keyboard/key-container-color m/Colors.grey.shade500
-                                :keyboard/font-size 16})]
-             :bind {:info info}
-             (m/Column
-              .children
-              [(m/Expanded
-                .child
-                (editor-stack shortcut-input !state cfg selecting? select-rect
-                              [(if (:has-kb? shell)
-                                 (keyboard/candidates nil)
-                                 (m/SizedBox.shrink))]))
+               shortcut-input
+               (m/CallbackShortcuts
+                .bindings (rich-config/shortcut-bindings cfg !state)
+                .child core-input-area)]
 
-               (if toolbar toolbar (m/SizedBox.shrink))
-               (if (:has-kb? shell)
-                 (keyboard/keyboard
-                  {:custom-fns
-                   {:on-return
-                    (fn []
-                      (if (:external-keyboard-delegate @!state)
-                        (when-let [on-return-fn (:on-return (:external-keyboard-delegate @!state))] (on-return-fn))
-                        (kb-handlers/handle-enter-action !state cfg)))
-                    :on-backspace
-                    (fn []
-                      (let [candidates (:keyboard/candidates-list @vk-state/state)]
-                        (if (seq candidates)
-                          (vk-action/clear-candidates)
+           (m/Container
+            .color background-color
+            .child
+            (if (is-mobile?)
+              (if wrap-ime?
+                (f/widget
+                 :let [info (merge options/keyboard-option
+                                   {:keyboard/mongol-font-family "OyunQaganTig"
+                                    :keyboard/key-container-color m/Colors.grey.shade500
+                                    :keyboard/font-size 16})]
+                 :bind {:info info}
+                 (m/Column
+                  .children
+                  [(m/Expanded
+                    .child
+                    (editor-stack shortcut-input !state cfg selecting? select-rect
+                                  [(if (:has-kb? shell)
+                                     (keyboard/candidates nil)
+                                     (m/SizedBox.shrink))]))
+
+                   (if toolbar toolbar (m/SizedBox.shrink))
+                   (if (:has-kb? shell)
+                     (keyboard/keyboard
+                      {:custom-fns
+                       {:on-return
+                        (fn []
                           (if (:external-keyboard-delegate @!state)
-                            (when-let [on-backspace-fn (:on-backspace (:external-keyboard-delegate @!state))] (on-backspace-fn))
-                            (kb-handlers/handle-backspace-action !state cfg)))))}})
-                 (m/SizedBox.shrink))]))
-            (m/Column
-             .children
-             [(m/Expanded
-               .child
-               (editor-stack shortcut-input !state cfg selecting? select-rect []))
-              (if toolbar toolbar (m/SizedBox.shrink))]))
-
-          (let [desktop-body
+                            (when-let [on-return-fn (:on-return (:external-keyboard-delegate @!state))] (on-return-fn))
+                            (kb-handlers/handle-enter-action !state cfg)))
+                        :on-backspace
+                        (fn []
+                          (let [candidates (:keyboard/candidates-list @vk-state/state)]
+                            (if (seq candidates)
+                              (vk-action/clear-candidates)
+                              (if (:external-keyboard-delegate @!state)
+                                (when-let [on-backspace-fn (:on-backspace (:external-keyboard-delegate @!state))] (on-backspace-fn))
+                                (kb-handlers/handle-backspace-action !state cfg)))))}})
+                     (m/SizedBox.shrink))]))
                 (m/Column
                  .children
                  [(m/Expanded
                    .child
                    (editor-stack shortcut-input !state cfg selecting? select-rect []))
-                  (if toolbar toolbar (m/SizedBox.shrink))])]
-            (if wrap-ime?
-              (overlay/ime-global-wrapper desktop-body
-                                          (or (:ime-wrapper-id rt) "be-ime-fallback"))
-              desktop-body))))))))
+                  (if toolbar toolbar (m/SizedBox.shrink))]))
+
+              (let [desktop-body
+                    (m/Column
+                     .children
+                     [(m/Expanded
+                       .child
+                       (editor-stack shortcut-input !state cfg selecting? select-rect []))
+                      (if toolbar toolbar (m/SizedBox.shrink))])]
+                (if wrap-ime?
+                  (overlay/ime-global-wrapper desktop-body
+                                              (or (:ime-wrapper-id rt) "be-ime-fallback"))
+                  desktop-body))))))))))

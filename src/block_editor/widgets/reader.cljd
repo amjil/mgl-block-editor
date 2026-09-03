@@ -3,7 +3,11 @@
    Supports wiki markup (`[[link]]`, `#tag`, `((uuid))`) and leading `key:: value` properties."
   (:require ["package:flutter/material.dart" :as m]
             ["package:mongol/mongol.dart" :as mongol]
+            [cljd.flutter :as f]
             [rich-editor.config :as rich-config]
+            [block-editor.commands.navigate :as navigate]
+            [block-editor.runtime :as runtime]
+            [block-editor.utils.collapse :as collapse]
             [block-editor.utils.inline :as inline]
             [block-editor.utils.highlighter :as highlighter]))
 
@@ -116,3 +120,143 @@
         (if (and plugin (:render-read plugin))
           ((:render-read plugin) block base-style on-link-tap !state)
           (default-read-text block base-style on-link-tap)))]))))
+
+;; =============================================================================
+;; Document-level preview (no IME / focus / reorder)
+;; =============================================================================
+
+(defn- reader-block-snapshot
+  "Content-aware snapshot so preview refreshes on persist / remote reload."
+  [state id]
+  (let [block (get-in state [:blocks id])]
+    (when block
+      {:id id
+       :type (:type block)
+       :content (:content block "")
+       :content-spans (:content-spans block [])
+       :data (:data block)
+       :attributes (:attributes block)
+       :children (:children block [])
+       :collapsed? (boolean (:collapsed? block false))
+       :highlighted? (= id (:highlighted-block-id state))})))
+
+(defn- collapse-handle [!state id collapsed?]
+  (m/GestureDetector
+   .behavior m.HitTestBehavior/opaque
+   .onTap #(collapse/toggle-collapse! !state id)
+   .child
+   (m/Padding
+    .padding (m.EdgeInsets/only .bottom 4.0)
+    .child
+    (m/RotatedBox
+     .quarterTurns 1
+     .child
+     (m/Icon (if collapsed? m.Icons/arrow_right m.Icons/arrow_drop_up)
+             .size 16.0
+             .color m.Colors/blue)))))
+
+(defn- reader-column
+  "One block as static `block-reader-view`, with optional collapse + locate flash."
+  [id !state cfg]
+  (f/widget
+   :watch [snap (f/$ (reader-block-snapshot (f/<! !state) id))]
+   (if-not snap
+     (m/SizedBox.shrink)
+     (let [plugins (:block-plugins cfg [])
+           on-link-tap (:on-link-tap cfg)
+           block {:id (:id snap)
+                  :type (:type snap)
+                  :content (:content snap)
+                  :content-spans (:content-spans snap)
+                  :data (:data snap)
+                  :attributes (:attributes snap)
+                  :children (:children snap)
+                  :collapsed? (:collapsed? snap)}
+           show-arrow? (and (seq (:children snap))
+                            (not= (:type snap) :toggle))
+           body (block-reader-view block plugins cfg on-link-tap !state)]
+       (m/KeyedSubtree
+        .key (navigate/widget-key !state id)
+        .child
+        (m/Column
+         .crossAxisAlignment m.CrossAxisAlignment/start
+         .children
+         [(if show-arrow?
+            (collapse-handle !state id (:collapsed? snap))
+            (m/SizedBox .height 8.0))
+          (m/Expanded
+           .child
+           (m/Padding
+            .padding (m.EdgeInsets/only .right 10.0)
+            .child
+            (if (:highlighted? snap)
+              (m/Stack
+               .clipBehavior m.Clip/none
+               .children
+               [body
+                (m/Positioned.fill
+                 .child
+                 (m/IgnorePointer
+                  .child
+                  (m/Container
+                   .decoration (m/BoxDecoration
+                                .color (-> m.Colors/amber (.withOpacity 0.22))
+                                .border (m/Border.all .color m.Colors/amber .width 1.5)
+                                .borderRadius (m.BorderRadius/circular 4.0)))))])
+              body)))]))))))
+
+(defn- reader-subtree
+  "Root-or-nested preview column plus visible children."
+  [id !state cfg]
+  (f/widget
+   :watch [snap (f/$ (let [b (get-in (f/<! !state) [:blocks id])]
+                       {:children (:children b [])
+                        :collapsed? (boolean (:collapsed? b false))}))]
+   (let [visible (if (:collapsed? snap) [] (:children snap))]
+     (m/Row
+      .crossAxisAlignment m.CrossAxisAlignment/start
+      .mainAxisSize m.MainAxisSize/min
+      .children
+      (vec
+       (cons
+        (reader-column id !state cfg)
+        (map (fn [child-id]
+               (m/Padding
+                .key (m/ValueKey child-id)
+                .padding (m.EdgeInsets/only .top 32.0)
+                .child (reader-subtree child-id !state cfg)))
+             visible)))))))
+
+(defn document-reader
+  "Full-document preview: `block-reader-view` tree, horizontal scroll, no IME.
+   Links, task checkboxes, and toggle collapse still work."
+  [!state cfg & {:keys [padding background-color]
+                 :or {padding (m.EdgeInsets/all 24.0)
+                      background-color m.Colors/transparent}}]
+  (f/widget
+   :managed [scroll-ctrl (m/ScrollController)
+             _rt !state :dispose runtime/release! :refresh-on !state]
+   :watch [shell (f/$ (let [s (f/<! !state)]
+                        {:root (:root s [])
+                         :scroll-to-block-id (:scroll-to-block-id s)}))]
+   (let [root-ids (:root shell)
+         _ (when-let [id (:scroll-to-block-id shell)]
+             (m/WidgetsBinding.instance.addPostFrameCallback
+              (fn [_]
+                (when (= id (:scroll-to-block-id @!state))
+                  (navigate/consume-scroll-request! scroll-ctrl !state id))))
+             nil)]
+     (m/Container
+      .color background-color
+      .child
+      (m/ListView.builder
+       .controller scroll-ctrl
+       .scrollDirection m/Axis.horizontal
+       .padding padding
+       .itemCount (count root-ids)
+       .itemBuilder
+       (fn [_ idx]
+         (let [id (nth root-ids idx)]
+           (m/KeyedSubtree
+            .key (m/ValueKey id)
+            .child (reader-subtree id !state cfg)))))))))
