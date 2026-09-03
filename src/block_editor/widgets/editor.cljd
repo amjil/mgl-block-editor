@@ -117,8 +117,8 @@
 
 (defn- resolved-config
   "Reuse the last `build-config` result while `editor-config` is `identical?`.
-   Only `assoc`s `:editor-config` onto `!state` when the built map is new,
-   so a parent watching the same atom is not pulled into a rebuild loop."
+   Writes `:editor-config` onto `!state` after the current frame so a parent
+   watching the same atom is not marked dirty mid-build."
   [!state editor-config]
   (let [rt (runtime/of !state)
         !in (:!user-editor-config rt)
@@ -129,7 +129,10 @@
         (reset! !in editor-config)
         (reset! !out cfg)
         (when-not (identical? (:editor-config @!state) cfg)
-          (swap! !state assoc :editor-config cfg))
+          (m/WidgetsBinding.instance.addPostFrameCallback
+           (fn [_]
+             (when-not (identical? (:editor-config @!state) cfg)
+               (swap! !state assoc :editor-config cfg)))))
         cfg))))
 
 ;; -----------------------------------------------------------------------------
@@ -162,11 +165,16 @@
 
     (if read-only?
       (do
+        ;; Defer blur — must not swap! !state while a parent Watch is building.
         (when (or (:active-block-id @!state) (:cursor-visible @!state))
-          (editor-cmd/blur-all !state))
+          (m/WidgetsBinding.instance.addPostFrameCallback
+           (fn [_]
+             (when (or (:active-block-id @!state) (:cursor-visible @!state))
+               (editor-cmd/blur-all !state)))))
         (reader/document-reader !state cfg
                                 :padding padding
-                                :background-color background-color))
+                                :background-color background-color
+                                :leading-widget leading-widget))
 
       (do
         (autocomplete/install-sniffer! !state)
@@ -207,6 +215,7 @@
                 .scrollController scroll-ctrl
                 .scrollDirection m/Axis.horizontal
                 .padding padding
+                .header leading-widget
                 .buildDefaultDragHandles false
                 .onReorder (fn [^int old-idx ^int new-idx]
                              (when-let [reorder-fn (:reorder-block! ops)]

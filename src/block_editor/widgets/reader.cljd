@@ -229,8 +229,9 @@
 
 (defn document-reader
   "Full-document preview: `block-reader-view` tree, horizontal scroll, no IME.
-   Links, task checkboxes, and toggle collapse still work."
-  [!state cfg & {:keys [padding background-color]
+   Links, task checkboxes, and toggle collapse still work.
+   Optional `:leading-widget` scrolls ahead of the first block."
+  [!state cfg & {:keys [padding background-color leading-widget]
                  :or {padding (m.EdgeInsets/all 24.0)
                       background-color m.Colors/transparent}}]
   (f/widget
@@ -240,6 +241,8 @@
                         {:root (:root s [])
                          :scroll-to-block-id (:scroll-to-block-id s)}))]
    (let [root-ids (:root shell)
+         lead? (boolean leading-widget)
+         offset (if lead? 1 0)
          _ (when-let [id (:scroll-to-block-id shell)]
              (m/WidgetsBinding.instance.addPostFrameCallback
               (fn [_]
@@ -253,10 +256,12 @@
        .controller scroll-ctrl
        .scrollDirection m/Axis.horizontal
        .padding padding
-       .itemCount (count root-ids)
+       .itemCount (+ (count root-ids) offset)
        .itemBuilder
        (fn [_ idx]
-         (let [id (nth root-ids idx)]
-           (m/KeyedSubtree
-            .key (m/ValueKey id)
-            .child (reader-subtree id !state cfg)))))))))
+         (if (and lead? (zero? idx))
+           leading-widget
+           (let [id (nth root-ids (- idx offset))]
+             (m/KeyedSubtree
+              .key (m/ValueKey id)
+              .child (reader-subtree id !state cfg))))))))))
