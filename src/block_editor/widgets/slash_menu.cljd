@@ -1,13 +1,18 @@
 (ns block-editor.widgets.slash-menu
   "A floating command palette triggered by typing '/'.
    Customized for Traditional Mongolian: Horizontal scrolling with vertical text.
-   Supports type-change commands and :action :insert (date/time) commands.
-   Positioned via CompositedTransformFollower on the active block LayerLink."
+   Supports type-change commands, :action :insert (date/time), and host
+   `:handler` / special actions. Commands come from `:slash-commands` on
+   editor-config when provided; otherwise built-in defaults are used.
+   Positioned via CompositedTransformFollower on the active block LayerLink.
+   Visual style matches `[[` / `#` autocomplete (`:link-autocomplete-style`)."
   (:require ["package:flutter/material.dart" :as m]
             ["package:mongol/mongol.dart" :as mgl]
+            [clojure.string :as str]
             [cljd.flutter :as f]
             [block-editor.runtime :as runtime]
-            [block-editor.utils.date :as date]))
+            [block-editor.utils.date :as date]
+            [block-editor.widgets.overlay-style :as overlay-style]))
 
 (defn slash-layer-link
   "LayerLink for this editor. Bound to the active block via
@@ -34,10 +39,25 @@
    {:title "Now" :icon m.Icons/access_time :keywords ["now" "time"]
     :action :insert :value-fn date/get-now-time}])
 
-(defn- all-commands []
+(defn- all-default-commands []
   (into type-commands (insert-commands)))
 
 (def available-commands type-commands)
+
+(defn- command-label
+  "Host commands use `:label`; built-ins use `:title`."
+  [cmd]
+  (or (:label cmd) (:title cmd) ""))
+
+(defn- normalize-command [cmd]
+  (cond-> cmd
+    (and (:label cmd) (nil? (:title cmd)))
+    (assoc :title (:label cmd))))
+
+(defn- commands-for-cfg [cfg]
+  (if-let [host (:slash-commands cfg)]
+    (mapv normalize-command host)
+    (all-default-commands)))
 
 (def ^:private slash-token-re #"/([a-zA-Z0-9]*)$")
 
@@ -47,43 +67,59 @@
   (when-let [match (re-find slash-token-re (or content ""))]
     (second match)))
 
-(defn- filter-commands [query]
-  (let [q (.toLowerCase query)
-        cmds (all-commands)]
+(defn- filter-commands [commands query]
+  (let [q (.toLowerCase (or query ""))]
     (if (empty? q)
-      cmds
-      (filter (fn [{:keys [title keywords]}]
-                (or (clojure.string/includes? (.toLowerCase title) q)
-                    (some #(clojure.string/includes? % q) keywords)))
-              cmds))))
+      commands
+      (filterv (fn [cmd]
+                 (let [label (command-label cmd)
+                       kws (or (:keywords cmd) [])]
+                   (or (str/includes? (.toLowerCase label) q)
+                       (some #(str/includes? % q) kws))))
+               commands))))
 
 (defn matching-commands
-  [query]
-  (vec (filter-commands (or query ""))))
+  ([query] (matching-commands query nil))
+  ([query cfg]
+   (filter-commands (commands-for-cfg cfg) (or query ""))))
 
 (defn selected-slash-command
   "Command Enter should confirm while the slash menu is open. Nil if closed / empty."
   [!state]
   (let [active-id (:active-block-id @!state)
         content (if active-id (get-in @!state [:blocks active-id :content] "") "")
-        query (slash-query content)]
+        query (slash-query content)
+        cfg (:editor-config @!state)]
     (when query
-      (first (matching-commands query)))))
+      (first (matching-commands query cfg)))))
 
-(defn- slash-item-widget [!state active-id ops item selected?]
-  (let [{:keys [title icon]} item]
-    (m/InkWell
-     .onTap (fn []
-              (when-let [execute-fn (:execute-slash-command! ops)]
-                (execute-fn !state active-id item)))
+(defn- slash-item-widget [!state active-id ops item selected? style]
+  (let [label (command-label item)
+        icon (:icon item)
+        ink-color (or (.-color ^m/TextStyle (:text-style style)) m.Colors/black87)
+        icon-bg (or (:icon-bg style) (-> m.Colors/grey (.withOpacity 0.1)))
+        icon-color (or (:icon-color style) ink-color)]
+    (m/Material
+     .color m.Colors/transparent
      .child
-     (m/Container
-      .decoration (when selected?
-                    (m/BoxDecoration
-                     .color (-> m.Colors/blue (.withOpacity 0.08))))
+     (m/InkWell
+      .onTap (fn []
+               (when-let [execute-fn (:execute-slash-command! ops)]
+                 (execute-fn !state active-id item)))
+      .splashColor (:splash-color style)
+      .highlightColor (:highlight-color style)
       .child
-      (m/Padding
-       .padding (m.EdgeInsets/symmetric .horizontal 16.0 .vertical 16.0)
+      (m/Container
+       .constraints (m/BoxConstraints
+                     .minWidth (or (:item-min-width style) 56.0)
+                     .maxHeight (:max-height style))
+       .decoration (m/BoxDecoration
+                    .color (when selected? (:highlight-color style))
+                    .border (m/Border .right
+                                      (m/BorderSide
+                                       .color (:divider-color style)
+                                       .width 1.0)))
+       .padding (m.EdgeInsets/symmetric .horizontal 14.0 .vertical 14.0)
        .child
        (m/Column
         .mainAxisAlignment m.MainAxisAlignment/start
@@ -92,56 +128,67 @@
         [(m/Container
           .padding (m.EdgeInsets/all 8.0)
           .decoration (m/BoxDecoration
-                       .color (-> m.Colors/grey (.withOpacity 0.1))
+                       .color icon-bg
                        .shape m.BoxShape/circle)
-          .child (m/Icon icon .color m.Colors/black87 .size 20.0))
+          .child (m/Icon icon .color icon-color .size 20.0))
          (m/SizedBox .height 12.0)
-         (m/Flexible
+         (m/SizedBox
+          .height (max 80.0 (- (or (:item-height style) 188.0) 60.0))
           .child
           (mgl/MongolText
-           title
-           .style (m/TextStyle
-                   .fontWeight m.FontWeight/w500
-                   .fontSize 15.0
-                   .color m.Colors/black87)))]))))))
+           label
+           .overflow m.TextOverflow/ellipsis
+           .style (:text-style style)))]))))))
 
-(defn- slash-menu-panel [!state active-id filtered-items ops]
-  (m/Material
-   .elevation 24.0
-   .borderRadius (m/BorderRadius.circular 12.0)
-   .clipBehavior m.Clip/antiAlias
-   .color m.Colors/white
-   .child
-   (m/ConstrainedBox
-    .constraints (m/BoxConstraints .maxHeight 220.0 .minHeight 100.0)
-    .child
-    (m/SingleChildScrollView
-     .scrollDirection m.Axis/horizontal
+(defn- slash-menu-panel [!state active-id filtered-items ops style]
+  (let [radius (m.BorderRadius/circular (:border-radius style))]
+    (m/Material
+     .elevation (:elevation style)
+     .shadowColor (-> m.Colors/black (.withOpacity 0.18))
+     .color (:background style)
+     .borderRadius radius
+     .clipBehavior m.Clip/antiAlias
      .child
-     (m/Row
-      .mainAxisSize m.MainAxisSize/min
-      .crossAxisAlignment m.CrossAxisAlignment/start
-      .children
-      (into []
-            (map-indexed
-             (fn [i item]
-               (slash-item-widget !state active-id ops item (zero? i)))
-             filtered-items)))))))
+     (m/ConstrainedBox
+      .constraints (m/BoxConstraints
+                    .maxWidth (:max-width style)
+                    .maxHeight (:max-height style))
+      .child
+      (m/DecoratedBox
+       .decoration (m/BoxDecoration
+                    .borderRadius radius
+                    .border (m/Border.all
+                             .color (:border-color style)
+                             .width 1.0))
+       .child
+       (m/ListView.builder
+        .scrollDirection m.Axis/horizontal
+        .padding (m.EdgeInsets/symmetric .horizontal 2.0)
+        .physics (m/BouncingScrollPhysics.)
+        .itemCount (count filtered-items)
+        .itemBuilder
+        (fn [_ i]
+          (slash-item-widget !state active-id ops
+                             (nth filtered-items i)
+                             (zero? i)
+                             style))))))))
 
 (defn slash-overlay
   "Follows the active block via LayerLink when content ends with `/[query]`."
   [!state cfg]
   (f/widget
    :watch [state-val !state]
+   :context ctx
    (let [active-id (:active-block-id state-val)
          content (if active-id (get-in state-val [:blocks active-id :content] "") "")
          query (slash-query content)
-         filtered-items (when query (matching-commands query))
+         filtered-items (when query (matching-commands query cfg))
          ops (:block-ops cfg)]
      (if (seq filtered-items)
        (m/CompositedTransformFollower
         .link (slash-layer-link !state)
         .showWhenUnlinked false
         .offset (m/Offset. 12.0 8.0)
-        .child (slash-menu-panel !state active-id filtered-items ops))
+        .child (slash-menu-panel !state active-id filtered-items ops
+                                 (overlay-style/resolve ctx cfg)))
        (m/SizedBox.shrink)))))

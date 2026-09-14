@@ -437,6 +437,18 @@
     (let [token (first m)]
       [(- (count content) (count token)) (count token)])))
 
+(def ^:private slash-blocked-types
+  "Atomic blocks that need host data (picker / URL) — not bare type conversion."
+  #{:image :table :bookmark :attachment})
+
+(defn- strip-trailing-slash!
+  "Delete trailing `/query` from the block. Returns true when stripped."
+  [!state block-id]
+  (let [content (get-in @!state [:blocks block-id :content] "")]
+    (when-let [[start len] (trailing-slash-token content)]
+      (text-cmd/delete-range !state block-id start len)
+      true)))
+
 (defn- execute-slash-insert!
   "Replace the trailing `/query` with `value` via delete-range + insert-string
    so `:content-spans` stay aligned."
@@ -449,26 +461,36 @@
       (text-cmd/insert-string !state block-id start value)
       (editor-cmd/focus-block !state block-id (+ start (count value))))))
 
-(def ^:private slash-atomic-types
-  "Atomic blocks are created from the toolbar, not slash conversion."
-  #{:image :divider :table :bookmark})
-
 (defn- execute-slash-type-change!
   "Strip the trailing `/query` and convert the current text block.
-   Image / divider / bookmark / table are not slash targets."
+   Image / attachment / bookmark / table need host handlers, not bare convert."
   [!state block-id command-type]
-  (when-not (contains? slash-atomic-types command-type)
+  (when-not (contains? slash-blocked-types command-type)
     (history/record-snapshot! !state)
     (let [content (get-in @!state [:blocks block-id :content] "")]
       (when-let [[start len] (trailing-slash-token content)]
         (text-cmd/delete-range !state block-id start len)
         (swap! !state assoc-in [:blocks block-id :type] command-type)))))
 
+(defn- execute-slash-handler!
+  "Strip `/query` then run host `:handler` (e.g. image / attachment picker).
+   History is recorded by the handler / convert-block!."
+  [!state block-id cmd]
+  (strip-trailing-slash! !state block-id)
+  (when-let [handler (:handler cmd)]
+    (handler !state block-id)))
+
 (defn execute-slash-command!
   [!state block-id cmd-or-type]
   (let [cmd (if (keyword? cmd-or-type) {:type cmd-or-type} cmd-or-type)]
-    (case (:action cmd)
-      :insert (execute-slash-insert! !state block-id cmd)
+    (cond
+      (fn? (:handler cmd))
+      (execute-slash-handler! !state block-id cmd)
+
+      (= :insert (:action cmd))
+      (execute-slash-insert! !state block-id cmd)
+
+      (:type cmd)
       (execute-slash-type-change! !state block-id (:type cmd)))))
 
 ;; =============================================================================

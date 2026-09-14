@@ -17,7 +17,7 @@
   {:slash-layer-link (m/LayerLink.)
    :ime-wrapper-id (str "be-ime-" (random-uuid))
    :!block-keys (atom {})
-   :!ac-state (atom {:active? false :query "" :block-id nil})
+   :!ac-state (atom {:active? false :kind nil :query "" :block-id nil})
    :!ac-sniffer-installed (atom false)
    :!highlight-timer (atom nil)
    :!marquee-last-intersect-ms (atom 0)

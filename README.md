@@ -108,7 +108,9 @@ Useful keys:
 | `:block-style` | `(fn [block-type] -> TextStyle)` |
 | `:on-link-tap` | Called for link/tag taps in read mode |
 | `:link-suggestions` | `(fn [query] -> seq of strings)` — powers `[[` autocomplete |
-| `:link-autocomplete-style` | Optional map overriding Theme defaults for the autocomplete panel |
+| `:tag-suggestions` | `(fn [query] -> seq of strings)` — powers `#` autocomplete |
+| `:slash-commands` | Optional command maps (`:label` `:icon` `:type` / `:handler`) for `/` menu |
+| `:link-autocomplete-style` | Optional map overriding Theme defaults for `[[` / `#` / `/` panels |
 | `:block-plugins` | Vector of plugin maps (merged over built-ins by `:type`) |
 
 Built-in plugins are always registered unless you override the same `:type`:  

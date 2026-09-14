@@ -1,6 +1,7 @@
 (ns block-editor.widgets.autocomplete
-  "Floating `[[wikilink` autocomplete. Candidate source is injected via
-   `:link-suggestions` on editor-config — `(fn [query] -> seq of strings)`.
+  "Floating `[[wikilink` / `#tag` autocomplete. Candidate sources are injected via
+   `:link-suggestions` / `:tag-suggestions` on editor-config —
+   `(fn [query] -> seq of strings)`.
 
    Appearance follows Flutter `Theme` / `ColorScheme` by default. Hosts may
    override via `:link-autocomplete-style` on editor-config:
@@ -14,6 +15,7 @@
             [cljd.flutter :as f]
             [block-editor.runtime :as runtime]
             [block-editor.widgets.slash-menu :as slash-menu]
+            [block-editor.widgets.overlay-style :as overlay-style]
             [rich-editor.commands.transaction :as tx]
             [rich-editor.commands.editor-commands :as editor-cmd]))
 
@@ -24,9 +26,9 @@
   [!state]
   (let [!ac (ac-atom !state)]
     (when (:active? @!ac)
-      (swap! !ac assoc :active? false :query "" :block-id nil))))
+      (swap! !ac assoc :active? false :kind nil :query "" :block-id nil))))
 
-(defn- handle-select!
+(defn- handle-link-select!
   [!state page-name]
   (let [{:keys [block-id query]} @(ac-atom !state)
         block (get-in @!state [:blocks block-id])
@@ -43,8 +45,46 @@
     (editor-cmd/focus-block !state block-id (count new-text))
     (close-menu! !state)))
 
+(defn- handle-tag-select!
+  [!state tag-name]
+  (let [{:keys [block-id query]} @(ac-atom !state)
+        block (get-in @!state [:blocks block-id])
+        old-text (or (:content block) "")
+        target-str (str "#" query)
+        last-idx (.lastIndexOf old-text target-str)
+        new-text (if (>= last-idx 0)
+                   (str (.substring old-text 0 last-idx) "#" tag-name " ")
+                   old-text)]
+    (tx/commit-transaction!
+     !state
+     (tx/make-transaction :ops [(tx/update-data-op block-id {:content new-text})]
+                          :after-selection nil))
+    (editor-cmd/focus-block !state block-id (count new-text))
+    (close-menu! !state)))
+
+(defn- handle-select!
+  [!state name]
+  (let [kind (:kind @(ac-atom !state))]
+    (if (= kind :tag)
+      (handle-tag-select! !state name)
+      (handle-link-select! !state name))))
+
+(defn- detect-trigger
+  "Prefer unclosed `[[…` over trailing `#tag`. Returns
+   `{:kind :link|:tag :query string}` or nil."
+  [content]
+  (let [link-re (dart:core/RegExp. "\\[\\[([^\\]]*)$")
+        link-match (first (.allMatches link-re content))]
+    (if link-match
+      {:kind :link :query (or (.group link-match 1) "")}
+      (let [tag-re (dart:core/RegExp. "(?:^|[\\s])#([^\\s#\\[\\]]*)$")
+            tag-match (first (.allMatches tag-re content))]
+        (when tag-match
+          {:kind :tag :query (or (.group tag-match 1) "")})))))
+
 (defn install-sniffer!
-  "Watch active block content for unclosed `[[…`. No-op when suggestions missing.
+  "Watch active block content for unclosed `[[…` or trailing `#…`.
+   No-op when the matching suggestions callback is missing.
    Installed once per state atom; writes only this editor's autocomplete state."
   [!state]
   (let [rt (runtime/of !state)
@@ -56,50 +96,21 @@
        !state runtime/ac-sniffer-watch
        (fn [_ _ _ new-state]
          (let [cfg (:editor-config new-state)
-               suggestions (:link-suggestions cfg)]
-           (if-not suggestions
+               active-id (:active-block-id new-state)]
+           (if-not active-id
              (close-menu! !state)
-             (let [active-id (:active-block-id new-state)]
-               (if-not active-id
-                 (close-menu! !state)
-                 (let [content (get-in new-state [:blocks active-id :content] "")
-                       regex (dart:core/RegExp. "\\[\\[([^\\]]*)$")
-                       match (first (.allMatches regex content))]
-                   (if match
-                     (reset! !ac {:active? true
-                                  :query (or (.group match 1) "")
-                                  :block-id active-id})
-                     (close-menu! !state))))))))))))
-
-(defn- resolve-style
-  "Theme defaults merged with optional `:link-autocomplete-style` overrides."
-  [ctx cfg]
-  (let [theme (m/Theme.of ctx)
-        cs (.-colorScheme theme)
-        tt (.-textTheme theme)
-        base-text (or (.-bodyMedium tt)
-                      (m/TextStyle .fontSize 16.0 .color (.-onSurface cs)))
-        overrides (or (:link-autocomplete-style cfg) {})]
-    (merge
-     {:background (.-surface cs)
-      :border-color (.-outline cs)
-      :divider-color (.withOpacity ^m/Color (.-outline cs) 0.7)
-      :splash-color (.withOpacity ^m/Color (.-primary cs) 0.08)
-      :highlight-color (.withOpacity ^m/Color (.-primary cs) 0.06)
-      :text-style (.copyWith ^m/TextStyle base-text
-                             .color (.-onSurface cs)
-                             .fontSize 15.0
-                             .fontWeight m.FontWeight/w500)
-      :empty-style (.copyWith ^m/TextStyle base-text
-                              .color (.-onSurfaceVariant cs)
-                              .fontSize 14.0)
-      :max-width 240.0
-      :max-height 220.0
-      :item-height 188.0
-      :item-min-width 44.0
-      :elevation 6.0
-      :border-radius 12.0}
-     overrides)))
+             (let [content (get-in new-state [:blocks active-id :content] "")
+                   hit (detect-trigger content)
+                   suggestions (case (:kind hit)
+                                 :link (:link-suggestions cfg)
+                                 :tag (:tag-suggestions cfg)
+                                 nil)]
+               (if (and hit suggestions)
+                 (reset! !ac {:active? true
+                              :kind (:kind hit)
+                              :query (:query hit)
+                              :block-id active-id})
+                 (close-menu! !state))))))))))
 
 (defn- suggestion-item [!state p-name style]
   (m/Material
@@ -127,7 +138,9 @@
                          .overflow m.TextOverflow/ellipsis
                          .style (:text-style style)))))))
 
-(defn- suggestions-panel [!state pages style]
+(defn suggestions-panel
+  "Bounded horizontal suggestion list used by link/tag autocomplete."
+  [!state pages style]
   ;; Must bound maxWidth: an unbounded horizontal ListView expands to fit all
   ;; children instead of scrolling (which pushed the menu past the viewport).
   (let [radius (m.BorderRadius/circular (:border-radius style))]
@@ -172,12 +185,16 @@
     (f/widget
      :watch [ac !ac]
      :context ctx
-     (let [suggestions-fn (:link-suggestions cfg)]
+     (let [kind (:kind ac)
+           suggestions-fn (case kind
+                            :link (:link-suggestions cfg)
+                            :tag (:tag-suggestions cfg)
+                            nil)]
        (if-not (and (:active? ac) suggestions-fn)
          (m/SizedBox.shrink)
          (let [query (or (:query ac) "")
                pages (vec (or (suggestions-fn query) []))
-               style (resolve-style ctx cfg)]
+               style (overlay-style/resolve ctx cfg)]
            (m/CompositedTransformFollower
             .link (slash-menu/slash-layer-link !state)
             .showWhenUnlinked false

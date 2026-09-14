@@ -64,7 +64,11 @@
    - `:block-plugins`
    - `:on-link-tap`
    - `:link-suggestions`  — `(fn [query] -> seq of page-name strings)` for `[[` autocomplete
+   - `:tag-suggestions`   — `(fn [query] -> seq of tag strings)` for `#` autocomplete
+   - `:slash-commands`    — optional vector of command maps
+     (`:label`/`:title` `:icon` `:type` and/or `:action` / `:handler`)
    - `:link-autocomplete-style` — optional map overriding Theme defaults
+     for `[[` / `#` / `/` floating menus
      (`:background` `:border-color` `:text-style` `:max-width` …)"
   [user-config]
   (let [user-config (or user-config {})
