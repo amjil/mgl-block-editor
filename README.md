@@ -15,6 +15,12 @@ Layout scrolls **horizontally** with vertical Mongol text — suitable for notes
 - Bottom toolbar for converting / inserting common block types
 - Multi-select (Shift+drag marquee) with bulk actions
 - Built-in plugins: task, blockquote, image, divider
+- Wiki markup in read mode: `[[wikilink]]`, `#tag`, `((block-ref))`
+- Locate a block when opening a page (`reveal-block!` — expand, scroll, flash highlight)
+- Block properties: leading `key:: value` lines with read-only panel
+- `[[` wikilink autocomplete (inject `:link-suggestions` callback)
+- Theme-aware overlays: link/image URL dialog and `[[` autocomplete follow Flutter `ColorScheme` (optional style overrides)
+- Slash menu follows the active block (LayerLink positioning)
 - Mobile virtual keyboard and desktop IME integration (via sibling packages)
 
 ## Dependencies
@@ -101,6 +107,8 @@ Useful keys:
 | `:text-block-types` | Set of types treated as editable text |
 | `:block-style` | `(fn [block-type] -> TextStyle)` |
 | `:on-link-tap` | Called for link/tag taps in read mode |
+| `:link-suggestions` | `(fn [query] -> seq of strings)` — powers `[[` autocomplete |
+| `:link-autocomplete-style` | Optional map overriding Theme defaults for the autocomplete panel |
 | `:block-plugins` | Vector of plugin maps (merged over built-ins by `:type`) |
 
 Built-in plugins are always registered unless you override the same `:type`:  
@@ -108,7 +116,53 @@ Built-in plugins are always registered unless you override the same `:type`:
 
 ## Inactive read mode
 
-Only the focused block (`:active-block-id`) mounts the editable rich-text view. All other blocks use `block-editor.widgets.reader/block-reader-view` (static Mongol text, or a plugin’s `:render-read`). Tap an inactive block to focus it.
+Only the focused block (`:active-block-id`) mounts the editable rich-text view. All other blocks use `block-editor.widgets.reader/block-reader-view` (wiki markup, properties panel, or a plugin’s `:render-read`). Tap an inactive block to focus it.
+
+## Wiki markup & properties
+
+Read mode parses inline markup via `block-editor.utils.inline` / `block-editor.utils.highlighter`:
+
+- `[[Page Name]]` — wikilink (tappable via `:on-link-tap`)
+- `#tag` — tag
+- `((uuid))` — block reference (`{:type :block :id uuid}` passed to `:on-link-tap`)
+
+Leading consecutive `key:: value` lines render as a properties panel; body text excludes those lines.
+
+For `[[` autocomplete while typing, provide:
+
+```clojure
+:link-suggestions (fn [query]
+                    ;; return matching page names from your DB / index
+                    (filter #(clojure.string/includes? % query) all-pages))
+```
+
+Optionally restyle the panel (keys merge over Theme / `ColorScheme` defaults):
+
+```clojure
+:link-autocomplete-style
+{:max-width 240.0
+ :max-height 220.0
+ :item-height 188.0
+ :background …          ;; Color
+ :border-color …
+ :divider-color …
+ :text-style …          ;; TextStyle
+ :empty-style …
+ :elevation 6.0
+ :border-radius 12.0}
+```
+
+Edit-mode wikilink highlighting Delta ops are available as `block-editor.utils.highlighter/compute-link-formats` for hosts that wire format middleware.
+
+## Link & image URL dialog
+
+External hyperlinks and image URLs use an in-editor overlay (`block-editor.widgets.link-dialog`), not a Flutter `showDialog`. Hosts open it via the built-in `:link` command, toolbar actions, or `block-editor.commands.link/request-link-dialog!` / `open-link-dialog!`.
+
+Behavior:
+
+- Colors come from `Theme.of` / `ColorScheme` (`surface`, `onSurface`, `error`) so light/dark and host themes apply automatically
+- Card is compact (`maxWidth` 300) and wrapped in `SingleChildScrollView` so the soft keyboard does not cause overflow
+- State lives on `!state` as `:link-dialog` (cleared on Apply / Cancel / Remove)
 
 ## Block plugins
 
@@ -157,6 +211,33 @@ Structural mutations live in `block-editor.commands.ops` (also wired as `:block-
 | `toggle-block-selection!` / `set-block-selection!` | Multi-select |
 | `delete-blocks!` / `duplicate-blocks!` / `convert-blocks!` | Bulk ops |
 | `execute-slash-command!` | Apply slash menu command |
+| `reveal-block!` | Expand ancestors, scroll into view, flash highlight |
+
+## Scroll to a block
+
+When the host opens a page from search (or a block ref), call `reveal-block!` **after** the document is in `!state`. Safe before the editor widget mounts: the editor consumes `:scroll-to-block-id` on first layout.
+
+```clojure
+(ns your.app
+  (:require [block-editor.commands.navigate :as navigate]
+            [block-editor.widgets.editor :as editor]))
+
+;; After loading the page into !state — e.g. user tapped a search hit:
+(navigate/reveal-block! !state "b-1a1")
+
+(editor/mongol-block-editor !state :editor-config editor-config)
+```
+
+What it does:
+
+1. Uncollapses every ancestor so the target can mount
+2. Sets `:scroll-to-block-id` / `:highlighted-block-id` (UI-only; not persisted)
+3. Scrolls the horizontal list so the block is in view (`Scrollable.ensureVisible`, with a fallback jump if the lazy list has not built that item yet)
+4. Amber flash for ~1.8s; does **not** steal focus / open the keyboard
+
+Equivalent without the helper: `(swap! !state assoc :scroll-to-block-id block-id)`. The editor still expands ancestors and highlights.
+
+Also available as `(:reveal-block! (:block-ops cfg))`.
 
 ## Slash menu & toolbar
 
@@ -181,10 +262,10 @@ The example initializes Mongolian IME assets and shows nested headings, tasks, a
 
 ```
 src/block_editor/
-  widgets/     editor, block_tree, reader, toolbar, slash_menu, selection_bar
-  commands/    ops (tree-aware structural mutations)
+  widgets/     editor, block_tree, reader, toolbar, slash_menu, selection_bar, autocomplete, link_dialog
+  commands/    ops (tree-aware structural mutations), navigate (reveal / scroll-to), link
   handlers/    keyboard
   plugins/     task, blockquote, image, divider, core
   config.cljd  build-config / plugin expansion
-  utils/       collapse, text, date
+  utils/       collapse, text, date, inline, highlighter
 ```
