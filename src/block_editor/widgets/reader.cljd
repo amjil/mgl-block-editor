@@ -18,26 +18,31 @@
 
 (defn wiki-mongol-text
   "Tappable wiki-markup MongolText.rich (no Flex wrapper — callers choose Expanded/Flexible).
-   Optional `content-spans` enable inline external hyperlinks and basic formats."
+   Optional `content-spans` enable inline external hyperlinks and basic formats.
+   Optional `on-link-hover` enables hover preview callbacks on wiki links."
   ([text base-style on-link-tap]
-   (wiki-mongol-text text nil base-style on-link-tap))
+   (wiki-mongol-text text nil base-style on-link-tap nil))
   ([text content-spans base-style on-link-tap]
+   (wiki-mongol-text text content-spans base-style on-link-tap nil))
+  ([text content-spans base-style on-link-tap on-link-hover]
    (mongol/MongolText.rich
     (m/TextSpan
-     .children (highlighter/build-wiki-text-spans text content-spans base-style on-link-tap)))))
+     .children (highlighter/build-wiki-text-spans text content-spans base-style
+                                                  on-link-tap true on-link-hover)))))
 
 (defn wiki-mongol-text-flex
   "Same as wiki-mongol-text, wrapped in Expanded so Mongol text wraps within
    a height-bounded Column (avoids RenderFlex overflow in vertical script)."
   ([text base-style on-link-tap]
-   (wiki-mongol-text-flex text nil base-style on-link-tap))
+   (wiki-mongol-text-flex text nil base-style on-link-tap nil))
   ([text content-spans base-style on-link-tap]
+   (wiki-mongol-text-flex text content-spans base-style on-link-tap nil))
+  ([text content-spans base-style on-link-tap on-link-hover]
    (m/Expanded
-    .child (wiki-mongol-text text content-spans base-style on-link-tap))))
-
+    .child (wiki-mongol-text text content-spans base-style on-link-tap on-link-hover))))
 (defn- render-properties-view
   "Leading `key:: value` panel; values also support wiki markup."
-  [props on-link-tap]
+  [props on-link-tap on-link-hover]
   (if (empty? props)
     (m/SizedBox.shrink)
     (m/Container
@@ -70,17 +75,17 @@
                   (m/TextSpan
                    .children
                    (highlighter/build-wiki-text-spans
-                    v
+                    v nil
                     (m/TextStyle .color (m/Color 0xFFD0D0D0)
                                  .fontSize 12.0
                                  .fontFamily "OyunQaganTig")
-                    on-link-tap))]))))
+                    on-link-tap true on-link-hover))]))))
             props))))))
 
 (defn- default-read-text
   "Wiki markup + optional properties panel. Fills parent height so body text can wrap.
    Passes `:content-spans` so external hyperlinks render in read mode."
-  [block base-style on-link-tap]
+  [block base-style on-link-tap on-link-hover]
   (let [raw (or (:content block) "")
         spans (:content-spans block [])
         props (inline/parse-properties raw)
@@ -93,9 +98,9 @@
      .children
      (filterv some?
               [(when (seq props)
-                 (render-properties-view props on-link-tap))
-               (wiki-mongol-text-flex clean body-spans base-style on-link-tap)]))))
-
+                 (render-properties-view props on-link-tap on-link-hover))
+               (wiki-mongol-text-flex clean body-spans base-style
+                                      on-link-tap on-link-hover)]))))
 (defn block-reader-view
   "Static block view for inactive (unfocused) blocks.
 
@@ -109,17 +114,19 @@
   ([block plugins cfg on-link-tap !state]
    (let [b-type (or (:type block) :paragraph)
          base-style (rich-config/get-block-style cfg b-type)
-         plugin (find-plugin plugins b-type)]
-     ;; Fill parent height (block_tree wraps this in Expanded) so body text wraps.
-     (m/Column
-      .mainAxisSize m.MainAxisSize/max
-      .crossAxisAlignment m.CrossAxisAlignment/start
-      .children
-      [(m/Expanded
-        .child
-        (if (and plugin (:render-read plugin))
-          ((:render-read plugin) block base-style on-link-tap !state)
-          (default-read-text block base-style on-link-tap)))]))))
+         plugin (find-plugin plugins b-type)
+         on-link-hover (:on-link-hover cfg)]
+     ;; Bind hover so plugin `:render-read` paths that call wiki-mongol-text inherit it.
+     (binding [highlighter/*on-link-hover* on-link-hover]
+       (m/Column
+        .mainAxisSize m.MainAxisSize/max
+        .crossAxisAlignment m.CrossAxisAlignment/start
+        .children
+        [(m/Expanded
+          .child
+          (if (and plugin (:render-read plugin))
+            ((:render-read plugin) block base-style on-link-tap !state)
+            (default-read-text block base-style on-link-tap on-link-hover)))])))))
 
 ;; =============================================================================
 ;; Document-level preview (no IME / focus / reorder)

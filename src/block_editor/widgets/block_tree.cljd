@@ -101,14 +101,15 @@
 
 (defn- wiki-text-span-builder
   "Inactive text: wiki markup styled for [[links]] / #tags / ((refs)).
-   Recognizers omitted — parent GestureDetector resolves taps via :wiki-target-at."
+   Recognizers omitted — parent GestureDetector resolves taps via :wiki-target-at.
+   Hover previews still fire via TextSpan onEnter/onExit when `:on-link-hover` is set."
   [content spans base-style cfg]
   (m/TextSpan
    .style base-style
    .children (highlighter/build-wiki-text-spans content spans base-style
                                                 (:on-link-tap cfg)
-                                                false)))
-
+                                                false
+                                                (:on-link-hover cfg))))
 (defn- render-inactive-wiki-text
   "Inactive text block: MglSelectableText + pan handlers (cross-block select)
    with wiki spans so [[links]] remain tappable."
@@ -116,7 +117,8 @@
   (node-view/block-node id !state idx
                         (assoc cfg
                                :text-span-builder wiki-text-span-builder
-                               :wiki-target-at highlighter/wiki-target-at)))
+                               :wiki-target-at highlighter/wiki-target-at
+                               :wiki-link-at highlighter/wiki-link-at)))
 
 (defn- render-read-content
   "Inactive atomic/read-mode body: static reader; tap focuses the block

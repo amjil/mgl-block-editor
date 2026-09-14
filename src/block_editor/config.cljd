@@ -63,6 +63,7 @@
    - `:text-block-wrappers`
    - `:block-plugins`
    - `:on-link-tap`
+   - `:on-link-hover` — `(fn [title ^Offset pos hovering?] …)` for wiki-link hover previews
    - `:link-suggestions`  — `(fn [query] -> seq of page-name strings)` for `[[` autocomplete
    - `:tag-suggestions`   — `(fn [query] -> seq of tag strings)` for `#` autocomplete
    - `:slash-commands`    — optional vector of command maps

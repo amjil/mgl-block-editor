@@ -55,7 +55,7 @@
                     .labelText "URL"
                     .hintText "https://example.com"
                     .border (m/OutlineInputBorder.)
-                    ;; 让输入框稍微紧凑一些
+                    ;; Slightly tighter padding for the input field
                     .contentPadding (m.EdgeInsets/symmetric .horizontal 12.0 .vertical 12.0))
        .onSubmitted
        (fn [value]
@@ -89,14 +89,14 @@
     (m/Material
      .elevation 8.0
      .borderRadius (m/BorderRadius.circular 12.0)
-     ;; 动态适应主调方的明暗模式背景色
+     ;; Match the host app's light/dark surface color
      .color (.-surface (.-colorScheme theme))
      .child
      (m/ConstrainedBox
-      ;; 将 maxWidth 从 360 缩减到 300，避免菜单太宽
+      ;; Shrink maxWidth from 360 to 300 so the menu is not too wide
       .constraints (m/BoxConstraints .maxWidth 300.0 .minWidth 260.0)
       .child
-      ;; 添加 SingleChildScrollView 以支持小屏幕和软键盘弹起时的滚动
+      ;; Scrollable for small screens and when the soft keyboard is up
       (m/SingleChildScrollView
        .child
        (m/Padding
@@ -113,7 +113,7 @@
    :watch [state !state]
    (if-let [dlg (:link-dialog state)]
      (f/widget
-      ;; 获取当前的 Context 以便读取 Theme
+      ;; Capture BuildContext so we can read Theme
       :context ctx
       :key (m/ValueKey (str "link-dlg-" (:kind dlg) "-" (:block-id dlg) "-"
                             (:start dlg) "-" (:end dlg) "-" (:error? dlg)
@@ -123,7 +123,7 @@
        .left 0.0 .top 0.0 .right 0.0 .bottom 0.0
        .child
        (m/Material
-        ;; 半透明遮罩层保持不变，以突出弹窗
+        ;; Keep the translucent scrim to highlight the dialog
         .color (-> m.Colors/black (.withOpacity 0.45))
         .child
         (m/Center
