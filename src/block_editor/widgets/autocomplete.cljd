@@ -1,7 +1,14 @@
 (ns block-editor.widgets.autocomplete
   "Floating `[[wikilink` autocomplete. Candidate source is injected via
    `:link-suggestions` on editor-config — `(fn [query] -> seq of strings)`.
-   Extracted from notes-app.ui.autocomplete (DB wiring stays in the host)."
+
+   Appearance follows Flutter `Theme` / `ColorScheme` by default. Hosts may
+   override via `:link-autocomplete-style` on editor-config:
+     {:background Color :border-color Color :divider-color Color
+      :splash-color Color :highlight-color Color
+      :text-style TextStyle :empty-style TextStyle
+      :max-width double :max-height double :item-height double
+      :item-min-width double :elevation double :border-radius double}"
   (:require ["package:flutter/material.dart" :as m]
             ["package:mongol/mongol.dart" :as mongol]
             [cljd.flutter :as f]
@@ -64,60 +71,115 @@
                                   :block-id active-id})
                      (close-menu! !state))))))))))))
 
-(defn- suggestion-item [!state p-name]
-  (m/InkWell
-   .onTap #(handle-select! !state p-name)
-   .child
-   (m/Container
-    .padding (m.EdgeInsets/symmetric .vertical 20.0 .horizontal 16.0)
-    .decoration (m/BoxDecoration
-                 .border (m/Border .right
-                                   (m/BorderSide .color (-> m.Colors/white
-                                                            (.withOpacity 0.15)))))
-    .child
-    (mongol/MongolText p-name
-                       .style (m/TextStyle .fontFamily "OyunQaganTig"
-                                           .fontSize 16.0
-                                           .color m.Colors/blue)))))
+(defn- resolve-style
+  "Theme defaults merged with optional `:link-autocomplete-style` overrides."
+  [ctx cfg]
+  (let [theme (m/Theme.of ctx)
+        cs (.-colorScheme theme)
+        tt (.-textTheme theme)
+        base-text (or (.-bodyMedium tt)
+                      (m/TextStyle .fontSize 16.0 .color (.-onSurface cs)))
+        overrides (or (:link-autocomplete-style cfg) {})]
+    (merge
+     {:background (.-surface cs)
+      :border-color (.-outline cs)
+      :divider-color (.withOpacity ^m/Color (.-outline cs) 0.7)
+      :splash-color (.withOpacity ^m/Color (.-primary cs) 0.08)
+      :highlight-color (.withOpacity ^m/Color (.-primary cs) 0.06)
+      :text-style (.copyWith ^m/TextStyle base-text
+                             .color (.-onSurface cs)
+                             .fontSize 15.0
+                             .fontWeight m.FontWeight/w500)
+      :empty-style (.copyWith ^m/TextStyle base-text
+                              .color (.-onSurfaceVariant cs)
+                              .fontSize 14.0)
+      :max-width 240.0
+      :max-height 220.0
+      :item-height 188.0
+      :item-min-width 44.0
+      :elevation 6.0
+      :border-radius 12.0}
+     overrides)))
 
-(defn- suggestions-panel [!state pages]
+(defn- suggestion-item [!state p-name style]
   (m/Material
-   .elevation 8.0
-   .borderRadius (m.BorderRadius/circular 8.0)
+   .color m.Colors/transparent
    .child
-   (m/Container
-    .height 240.0
-    .decoration (m/BoxDecoration
-                 .color (-> m.Colors/grey .-shade800)
-                 .borderRadius (m.BorderRadius/circular 8.0)
-                 .border (m/Border.all .color (-> m.Colors/blue (.withOpacity 0.5))))
+   (m/InkWell
+    .onTap #(handle-select! !state p-name)
+    .splashColor (:splash-color style)
+    .highlightColor (:highlight-color style)
     .child
-    (if (empty? pages)
-      (m/Padding
-       .padding (m.EdgeInsets/all 16.0)
-       .child (mongol/MongolText "No matches"
-                                 .style (m/TextStyle .color m.Colors/white54
-                                                     .fontFamily "OyunQaganTig")))
-      (m/ListView.builder
-       .scrollDirection m.Axis/horizontal
-       .itemCount (count pages)
-       .itemBuilder
-       (fn [_ i]
-         (suggestion-item !state (nth pages i))))))))
+    (m/Container
+     .constraints (m/BoxConstraints .minWidth (:item-min-width style))
+     .padding (m.EdgeInsets/symmetric .vertical 14.0 .horizontal 10.0)
+     .decoration (m/BoxDecoration
+                  .border (m/Border .right
+                                    (m/BorderSide
+                                     .color (:divider-color style)
+                                     .width 1.0)))
+     .child
+     ;; Mongol text grows vertically — clip long titles inside the panel height.
+     (m/SizedBox
+      .height (:item-height style)
+      .child
+      (mongol/MongolText p-name
+                         .overflow m.TextOverflow/ellipsis
+                         .style (:text-style style)))))))
+
+(defn- suggestions-panel [!state pages style]
+  ;; Must bound maxWidth: an unbounded horizontal ListView expands to fit all
+  ;; children instead of scrolling (which pushed the menu past the viewport).
+  (let [radius (m.BorderRadius/circular (:border-radius style))]
+    (m/Material
+     .elevation (:elevation style)
+     .shadowColor (-> m.Colors/black (.withOpacity 0.18))
+     .color (:background style)
+     .borderRadius radius
+     .clipBehavior m.Clip/antiAlias
+     .child
+     (m/ConstrainedBox
+      .constraints (m/BoxConstraints
+                    .maxWidth (:max-width style)
+                    .maxHeight (:max-height style))
+      .child
+      (m/DecoratedBox
+       .decoration (m/BoxDecoration
+                    .borderRadius radius
+                    .border (m/Border.all
+                             .color (:border-color style)
+                             .width 1.0))
+       .child
+       (if (empty? pages)
+         (m/Padding
+          .padding (m.EdgeInsets/all 16.0)
+          .child (mongol/MongolText "No matches"
+                                    .style (:empty-style style)))
+         (m/ListView.builder
+          .scrollDirection m.Axis/horizontal
+          .padding (m.EdgeInsets/symmetric .horizontal 2.0)
+          .physics (m/BouncingScrollPhysics.)
+          .itemCount (count pages)
+          .itemBuilder
+          (fn [_ i]
+            (suggestion-item !state (nth pages i) style)))))))))
 
 (defn autocomplete-overlay
-  "CompositedTransformFollower menu. Requires slash LayerLink on the active block."
+  "CompositedTransformFollower menu. Requires slash LayerLink on the active block.
+   Styles from Theme; optional `:link-autocomplete-style` on cfg."
   [!state cfg]
   (let [!ac (ac-atom !state)]
     (f/widget
      :watch [ac !ac]
+     :context ctx
      (let [suggestions-fn (:link-suggestions cfg)]
        (if-not (and (:active? ac) suggestions-fn)
          (m/SizedBox.shrink)
          (let [query (or (:query ac) "")
-               pages (vec (or (suggestions-fn query) []))]
+               pages (vec (or (suggestions-fn query) []))
+               style (resolve-style ctx cfg)]
            (m/CompositedTransformFollower
             .link (slash-menu/slash-layer-link !state)
             .showWhenUnlinked false
             .offset (m/Offset. 40.0 12.0)
-            .child (suggestions-panel !state pages))))))))
+            .child (suggestions-panel !state pages style))))))))

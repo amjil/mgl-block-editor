@@ -63,7 +63,9 @@
    - `:text-block-wrappers`
    - `:block-plugins`
    - `:on-link-tap`
-   - `:link-suggestions`  — `(fn [query] -> seq of page-name strings)` for `[[` autocomplete"
+   - `:link-suggestions`  — `(fn [query] -> seq of page-name strings)` for `[[` autocomplete
+   - `:link-autocomplete-style` — optional map overriding Theme defaults
+     (`:background` `:border-color` `:text-style` `:max-width` …)"
   [user-config]
   (let [user-config (or user-config {})
         plugin-list (merge-plugins (plugins/default-plugins)

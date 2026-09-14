@@ -1,25 +1,28 @@
 (ns block-editor.widgets.link-dialog
-  "In-editor overlay for adding/editing an external hyperlink or image URL."
+  "In-editor overlay for adding/editing an external hyperlink or image URL.
+   Theme-aware, scrollable, and compact width."
   (:require ["package:flutter/material.dart" :as m]
             [cljd.flutter :as f]
             [clojure.string :as str]
             [block-editor.commands.link :as link]))
 
 (defn- error-body
-  [!state dlg]
-  (m/Column
-   .mainAxisSize m.MainAxisSize/min
-   .crossAxisAlignment m.CrossAxisAlignment/stretch
-   .children
-   [(m/Text (or (:message dlg) "Select text to add a link")
-            .style (m/TextStyle .fontSize 16.0 .color m.Colors/black87))
-    (m/SizedBox .height 16.0)
-    (m/Align
-     .alignment m.Alignment/centerRight
-     .child
-     (m/TextButton
-      .onPressed #(link/close-link-dialog! !state)
-      .child (m/Text "OK")))]))
+  [!state dlg ctx]
+  (let [theme (m/Theme.of ctx)
+        color-scheme (.-colorScheme theme)]
+    (m/Column
+     .mainAxisSize m.MainAxisSize/min
+     .crossAxisAlignment m.CrossAxisAlignment/stretch
+     .children
+     [(m/Text (or (:message dlg) "Select text to add a link")
+              .style (m/TextStyle .fontSize 15.0 .color (.-onSurface color-scheme)))
+      (m/SizedBox .height 16.0)
+      (m/Align
+       .alignment m.Alignment/centerRight
+       .child
+       (m/TextButton
+        .onPressed #(link/close-link-dialog! !state)
+        .child (m/Text "OK")))])))
 
 (defn- apply-dialog!
   [!state dlg value]
@@ -28,8 +31,10 @@
     (link/apply-link! !state (:block-id dlg) (:start dlg) (:end dlg) value)))
 
 (defn- form-body
-  [!state dlg controller]
-  (let [image? (= (:kind dlg) :image)
+  [!state dlg controller ctx]
+  (let [theme (m/Theme.of ctx)
+        color-scheme (.-colorScheme theme)
+        image? (= (:kind dlg) :image)
         title (cond
                 image? (if (str/blank? (:href dlg)) "Add image URL" "Edit image URL")
                 (str/blank? (:href dlg)) "Add link"
@@ -39,8 +44,8 @@
      .crossAxisAlignment m.CrossAxisAlignment/stretch
      .children
      [(m/Text title
-              .style (m/TextStyle .fontSize 18.0 .fontWeight m.FontWeight/bold
-                                  .color m.Colors/black87))
+              .style (m/TextStyle .fontSize 16.0 .fontWeight m.FontWeight/bold
+                                  .color (.-onSurface color-scheme)))
       (m/SizedBox .height 12.0)
       (m/TextField
        .controller controller
@@ -49,7 +54,9 @@
        .decoration (m/InputDecoration
                     .labelText "URL"
                     .hintText "https://example.com"
-                    .border (m/OutlineInputBorder.))
+                    .border (m/OutlineInputBorder.)
+                    ;; 让输入框稍微紧凑一些
+                    .contentPadding (m.EdgeInsets/symmetric .horizontal 12.0 .vertical 12.0))
        .onSubmitted
        (fn [value]
          (apply-dialog! !state dlg value)))
@@ -65,10 +72,11 @@
                       (link/remove-link! !state (:block-id dlg)
                                          (:start dlg) (:end dlg)))
                     .child (m/Text "Remove"
-                                   .style (m/TextStyle .color m.Colors/red))))
+                                   .style (m/TextStyle .color (.-error color-scheme)))))
                  (m/TextButton
                   .onPressed #(link/close-link-dialog! !state)
                   .child (m/Text "Cancel"))
+                 (m/SizedBox .width 8.0)
                  (m/ElevatedButton
                   .onPressed
                   (fn []
@@ -76,21 +84,27 @@
                   .child (m/Text "Apply"))]))])))
 
 (defn- dialog-card
-  [!state dlg controller]
-  (m/Material
-   .elevation 8.0
-   .borderRadius (m/BorderRadius.circular 12.0)
-   .color m.Colors/white
-   .child
-   (m/ConstrainedBox
-    .constraints (m/BoxConstraints .maxWidth 360.0 .minWidth 280.0)
-    .child
-    (m/Padding
-     .padding (m.EdgeInsets/all 20.0)
+  [!state dlg controller ctx]
+  (let [theme (m/Theme.of ctx)]
+    (m/Material
+     .elevation 8.0
+     .borderRadius (m/BorderRadius.circular 12.0)
+     ;; 动态适应主调方的明暗模式背景色
+     .color (.-surface (.-colorScheme theme))
      .child
-     (if (:error? dlg)
-       (error-body !state dlg)
-       (form-body !state dlg controller))))))
+     (m/ConstrainedBox
+      ;; 将 maxWidth 从 360 缩减到 300，避免菜单太宽
+      .constraints (m/BoxConstraints .maxWidth 300.0 .minWidth 260.0)
+      .child
+      ;; 添加 SingleChildScrollView 以支持小屏幕和软键盘弹起时的滚动
+      (m/SingleChildScrollView
+       .child
+       (m/Padding
+        .padding (m.EdgeInsets/all 16.0)
+        .child
+        (if (:error? dlg)
+          (error-body !state dlg ctx)
+          (form-body !state dlg controller ctx))))))))
 
 (defn link-dialog-overlay
   "Full-screen dimmed panel while `:link-dialog` is present on editor state."
@@ -99,6 +113,8 @@
    :watch [state !state]
    (if-let [dlg (:link-dialog state)]
      (f/widget
+      ;; 获取当前的 Context 以便读取 Theme
+      :context ctx
       :key (m/ValueKey (str "link-dlg-" (:kind dlg) "-" (:block-id dlg) "-"
                             (:start dlg) "-" (:end dlg) "-" (:error? dlg)
                             "-" (:href dlg)))
@@ -107,9 +123,10 @@
        .left 0.0 .top 0.0 .right 0.0 .bottom 0.0
        .child
        (m/Material
+        ;; 半透明遮罩层保持不变，以突出弹窗
         .color (-> m.Colors/black (.withOpacity 0.45))
         .child
         (m/Center
          .child
-         (dialog-card !state dlg controller)))))
+         (dialog-card !state dlg controller ctx)))))
      (m/SizedBox.shrink))))
