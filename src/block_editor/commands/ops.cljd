@@ -156,7 +156,8 @@
 ;; =============================================================================
 
 (defn indent-block! 
-  "Moves a block into the :children array of its immediate previous sibling."
+  "Moves a block into the :children array of its immediate previous sibling.
+   Expands a collapsed parent (flashcard/toggle/…) so the caret stays visible."
   [!state block-id]
   (history/record-snapshot! !state)
   (swap! !state
@@ -169,8 +170,9 @@
                           (update-in s [:blocks parent-id :children] #(vec (remove #{block-id} %))))]
                  (-> s1
                      (update-in [:blocks prev-id :children] #(vec (conj (or % []) block-id)))
-                     ;; 🌟 Update the parent pointer to the new container
-                     (assoc-in [:blocks block-id :parent] prev-id)))
+                     (assoc-in [:blocks block-id :parent] prev-id)
+                     ;; Collapsed parents hide :children — expand so focus is not lost.
+                     (assoc-in [:blocks prev-id :collapsed?] false)))
                s)
              s))))
 
@@ -353,34 +355,6 @@
              (-> (reduce apply-duplicate s (forest-roots s block-ids))
                  (assoc :selected-block-ids #{}))))))
 
-(defn indent-selection!
-  "Tab / Shift+Tab entry used by rich-editor `:indent` / `:outdent` commands.
-   `direction` is 1 (indent) or -1 (outdent)."
-  [!state direction]
-  (let [selected (:selected-block-ids @!state #{})
-        active-id (:active-block-id @!state)]
-    (cond
-      (seq selected)
-      (if (pos? direction)
-        (indent-blocks! !state selected)
-        (outdent-blocks! !state selected))
-
-      active-id
-      (if (pos? direction)
-        (indent-block! !state active-id)
-        (outdent-block! !state active-id)))))
-
-(defn paste-when-no-focus!
-  "Insert clipboard text at the end of the last visible block when nothing is focused."
-  [!state raw-text]
-  (when (seq raw-text)
-    (let [state @!state
-          last-id (last (collapse/get-visible-root (:root state) (:blocks state)))]
-      (when last-id
-        (let [len (count (get-in state [:blocks last-id :content] ""))]
-          (text-cmd/insert-string !state last-id len raw-text)
-          {:focus-block last-id :offset (+ len (count raw-text))})))))
-
 (defn indent-blocks!
   [!state block-ids]
   (when (seq block-ids)
@@ -398,8 +372,8 @@
                                 (update-in s [:blocks parent-id :children] #(vec (remove #{id} %))))]
                        (-> s1
                            (update-in [:blocks prev-id :children] #(vec (conj (or % []) id)))
-                           ;; 🌟 Bulk sync parent pointer
-                           (assoc-in [:blocks id :parent] prev-id)))
+                           (assoc-in [:blocks id :parent] prev-id)
+                           (assoc-in [:blocks prev-id :collapsed?] false)))
                      s)
                    s)))))))
 
@@ -421,10 +395,43 @@
                            s2 (if (= gp-id :root)
                                 (update s1 :root #(vec (concat (subvec % 0 insert-idx) [id] (subvec % insert-idx))))
                                 (update-in s1 [:blocks gp-id :children] #(vec (concat (subvec (or % []) 0 insert-idx) [id] (subvec (or % []) insert-idx)))))]
-                       ;; 🌟 Bulk sync parent pointer
                        (assoc-in s2 [:blocks id :parent] gp-id))
                      s)
                    s)))))))
+
+(defn indent-selection!
+  "Tab / Shift+Tab entry used by rich-editor `:indent` / `:outdent` commands.
+   `direction` is 1 (indent) or -1 (outdent).
+   Re-focuses the active block after nesting so the caret survives expand/remount."
+  [!state direction]
+  (let [selected (:selected-block-ids @!state #{})
+        active-id (:active-block-id @!state)]
+    (cond
+      (seq selected)
+      (if (pos? direction)
+        (indent-blocks! !state selected)
+        (outdent-blocks! !state selected))
+
+      active-id
+      (do
+        (if (pos? direction)
+          (indent-block! !state active-id)
+          (outdent-block! !state active-id))
+        (when-let [id (:active-block-id @!state)]
+          (let [sel (get-in @!state [:blocks id :selection])
+                offset (if sel (.-extentOffset sel) 0)]
+            (editor-cmd/focus-block !state id offset)))))))
+
+(defn paste-when-no-focus!
+  "Insert clipboard text at the end of the last visible block when nothing is focused."
+  [!state raw-text]
+  (when (seq raw-text)
+    (let [state @!state
+          last-id (last (collapse/get-visible-root (:root state) (:blocks state)))]
+      (when last-id
+        (let [len (count (get-in state [:blocks last-id :content] ""))]
+          (text-cmd/insert-string !state last-id len raw-text)
+          {:focus-block last-id :offset (+ len (count raw-text))})))))
 
 ;; =============================================================================
 ;; Slash Command Execution
