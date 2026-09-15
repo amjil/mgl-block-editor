@@ -16,7 +16,8 @@
             [block-editor.plugins.ordered-list-item :as ordered-list-item]
             [block-editor.plugins.callout :as callout]
             [block-editor.plugins.bookmark :as bookmark]
-            [block-editor.plugins.toggle :as toggle]))
+            [block-editor.plugins.toggle :as toggle]
+            [block-editor.plugins.flashcard :as flashcard]))
 
 (def task-plugin task/task-plugin)
 (def blockquote-plugin blockquote/blockquote-plugin)
@@ -27,6 +28,7 @@
 (def callout-plugin callout/callout-plugin)
 (def bookmark-plugin bookmark/bookmark-plugin)
 (def toggle-plugin toggle/toggle-plugin)
+(def flashcard-plugin flashcard/flashcard-plugin)
 
 (defn default-plugins
   "Built-in plugins merged by `build-config` (user plugins override by :type)."
@@ -39,4 +41,5 @@
    (ordered-list-item/ordered-list-item-plugin)
    (callout/callout-plugin)
    (bookmark/bookmark-plugin)
-   (toggle/toggle-plugin)])
+   (toggle/toggle-plugin)
+   (flashcard/flashcard-plugin)])

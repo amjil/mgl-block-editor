@@ -184,7 +184,7 @@
          is-block-selected? (:is-block-selected? snap)
          is-highlighted? (:is-highlighted? snap)
          show-arrow? (and (:has-children? snap)
-                          (not= block-type :toggle))
+                          (not (contains? #{:toggle :flashcard} block-type)))
          is-collapsed? (:collapsed? snap)
          show-handle? (or show-arrow?
                           is-block-selected?

@@ -145,6 +145,8 @@
                                   #(ops/convert-block! !state active-id :callout))
                   (toolbar-button m/Icons.arrow_right "Toggle List" (= block-type :toggle)
                                   #(ops/convert-block! !state active-id :toggle))
+                  (toolbar-button m.Icons/quiz "Flashcard" (= block-type :flashcard)
+                                  #(ops/convert-block! !state active-id :flashcard))
 
                   (m/SizedBox .width 16.0)]))
 

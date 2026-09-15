@@ -1,0 +1,117 @@
+(ns block-editor.plugins.flashcard
+  "Flashcard block plugin — Question on front, children as folded answer.
+   Uses the tree's collapse logic to reveal/hide children."
+  (:require ["package:flutter/material.dart" :as m]
+            [block-editor.widgets.reader :as reader]
+            [block-editor.utils.inline :as inline]
+            [block-editor.utils.text :as text]
+            [block-editor.utils.collapse :as collapse]))
+
+(def ^:private default-bg-color (m/Color 0xFFE3F2FD)) ;; 浅蓝色卡片背景
+(def ^:private default-border-color (m/Color 0xFF90CAF9)) ;; 蓝色边框
+
+(defn- flip-eye
+  "Eye hit target above the first column. Listener bypasses gesture-arena fights
+   with the outer edit-mode text GestureDetector."
+  [!state id collapsed? has-children? icon-left-pad]
+  (m/Listener
+   .behavior m.HitTestBehavior/opaque
+   .onPointerDown
+   (fn [_]
+     (collapse/toggle-collapse! !state id)
+     nil)
+   .child
+   (m/Padding
+    .padding (m.EdgeInsets/only .left icon-left-pad .top 2.0)
+    .child
+    (m/Container
+     .width 28.0
+     .height 28.0
+     .alignment m.Alignment/center
+     .decoration (m/BoxDecoration
+                  .color (if has-children? m/Colors.blue m/Colors.grey.shade400)
+                  .shape m/BoxShape.circle)
+     .child
+     (m/RotatedBox
+      .quarterTurns 1
+      .child
+      (m/Icon (if collapsed? m/Icons.visibility_off m/Icons.visibility)
+              .size 16.0
+              .color m/Colors.white))))))
+
+(defn wrap-flashcard
+  "Wraps the editable text widget (the question) in a flashcard container."
+  [text-widget id !state _root-index block style _cfg]
+  (let [collapsed? (:collapsed? block false)
+        has-children? (boolean (seq (:children block [])))
+        col-width (if style (text/get-exact-column-width style) 18.0)
+        icon-left-pad (max 0.0 (/ (- col-width 28.0) 2.0))]
+    (m/Container
+     .margin (m/EdgeInsets.only .bottom 8.0 .right 8.0)
+     .decoration (m/BoxDecoration
+                  .color default-bg-color
+                  .border (m/Border.all .color default-border-color .width 1.5)
+                  .borderRadius (m/BorderRadius.circular 8.0)
+                  .boxShadow [(m/BoxShadow
+                               .color (-> m/Colors.black (.withOpacity 0.05))
+                               .blurRadius 4.0
+                               .offset (m/Offset 2.0 0.0))])
+     .padding (m/EdgeInsets.all 12.0)
+     .child
+     ;; Match toggle/task: Stack + Padding hit target (no Positioned).
+     ;; Top reserve is SizedBox (not Container padding) so empty chrome does not
+     ;; steal hits from the eye Listener.
+     (m/Stack
+      .alignment m.Alignment/topLeft
+      .clipBehavior m/Clip.none
+      .children
+      [(m/Column
+        .mainAxisSize m.MainAxisSize/min
+        .crossAxisAlignment m.CrossAxisAlignment/start
+        .children
+        [(m/SizedBox .height 36.0)
+         text-widget])
+
+       (flip-eye !state id collapsed? has-children? icon-left-pad)]))))
+
+(defn- render-flashcard-read
+  "Read-mode mirror of the flashcard."
+  [block base-style on-link-tap !state]
+  (let [collapsed? (:collapsed? block false)
+        has-children? (boolean (seq (:children block [])))
+        clean (inline/strip-properties (or (:content block) ""))
+        col-width (if base-style (text/get-exact-column-width base-style) 18.0)
+        icon-left-pad (max 0.0 (/ (- col-width 28.0) 2.0))]
+    (m/Container
+     .margin (m/EdgeInsets.only .bottom 8.0 .right 8.0)
+     .decoration (m/BoxDecoration
+                  .color default-bg-color
+                  .border (m/Border.all .color default-border-color .width 1.5)
+                  .borderRadius (m/BorderRadius.circular 8.0)
+                  .boxShadow [(m/BoxShadow
+                               .color (-> m/Colors.black (.withOpacity 0.05))
+                               .blurRadius 4.0
+                               .offset (m/Offset 2.0 0.0))])
+     .padding (m/EdgeInsets.all 12.0)
+     .child
+     (m/Stack
+      .alignment m.Alignment/topLeft
+      .clipBehavior m/Clip.none
+      .children
+      [(m/Column
+        .mainAxisSize m.MainAxisSize/min
+        .crossAxisAlignment m.CrossAxisAlignment/start
+        .children
+        [(m/SizedBox .height 36.0)
+         (reader/wiki-mongol-text clean (:content-spans block [])
+                                  base-style on-link-tap)])
+
+       (flip-eye !state (:id block) collapsed? has-children? icon-left-pad)]))))
+
+(defn flashcard-plugin
+  "Flashcard Q&A block."
+  []
+  {:type :flashcard
+   :text-block-type? true
+   :text-block-wrapper wrap-flashcard
+   :render-read render-flashcard-read})

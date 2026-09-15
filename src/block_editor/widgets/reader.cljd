@@ -180,7 +180,7 @@
                   :children (:children snap)
                   :collapsed? (:collapsed? snap)}
            show-arrow? (and (seq (:children snap))
-                            (not= (:type snap) :toggle))
+                            (not (contains? #{:toggle :flashcard} (:type snap))))
            body (block-reader-view block plugins cfg on-link-tap !state)]
        (m/KeyedSubtree
         .key (navigate/widget-key !state id)
