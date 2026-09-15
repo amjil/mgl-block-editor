@@ -115,6 +115,18 @@
                  extras
                  [(selection-bar/bulk-action-bar !state)])))))
 
+(defn- ensure-editor-config-on-state!
+  "Mirror built config onto `!state` after the frame.
+   Hosts often `reset!` document state (load/reload/sync) without `:editor-config`;
+   command handlers (:indent, clipboard, IME split) read ops from that key."
+  [!state cfg]
+  (when (and cfg (not (identical? (:editor-config @!state) cfg)))
+    (m/WidgetsBinding.instance.addPostFrameCallback
+     (fn [_]
+       (when (and cfg (not (identical? (:editor-config @!state) cfg)))
+         (swap! !state assoc :editor-config cfg)))))
+  nil)
+
 (defn- resolved-config
   "Reuse the last `build-config` result while `editor-config` is `identical?`.
    Writes `:editor-config` onto `!state` after the current frame so a parent
@@ -124,15 +136,13 @@
         !in (:!user-editor-config rt)
         !out (:!built-editor-config rt)]
     (if (identical? @!in editor-config)
-      @!out
+      (let [cfg @!out]
+        (ensure-editor-config-on-state! !state cfg)
+        cfg)
       (let [cfg (be-config/build-config editor-config)]
         (reset! !in editor-config)
         (reset! !out cfg)
-        (when-not (identical? (:editor-config @!state) cfg)
-          (m/WidgetsBinding.instance.addPostFrameCallback
-           (fn [_]
-             (when-not (identical? (:editor-config @!state) cfg)
-               (swap! !state assoc :editor-config cfg)))))
+        (ensure-editor-config-on-state! !state cfg)
         cfg))))
 
 ;; -----------------------------------------------------------------------------
@@ -198,6 +208,8 @@
 
          (let [root-ids (:root shell)
                _ (node-view/sync-text-keys! @!state)
+               ;; Re-attach after host reset!/reload wiped `:editor-config`.
+               _ (ensure-editor-config-on-state! !state cfg)
 
                ;; Host set `:scroll-to-block-id` (via `reveal-block!` or assoc).
                ;; Consume after this frame so keys/layout exist; ignore duplicates.

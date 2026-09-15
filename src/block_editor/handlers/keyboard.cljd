@@ -221,10 +221,15 @@
           (= logical-key s.LogicalKeyboardKey/enter)
           (if is-down? (do (handle-enter-action !state cfg) m.KeyEventResult/handled) m.KeyEventResult/handled)
 
-          ;; Hierarchical indentation with Tab — same :indent / :outdent commands as shortcuts
+          ;; Hierarchical indentation with Tab / Shift+Tab.
+          ;; Call :block-ops from `cfg` directly — do not go through :indent/:outdent
+          ;; command handlers, which look up :editor-config on !state (often missing
+          ;; after load/reload until a deferred assoc lands).
           (= logical-key s.LogicalKeyboardKey/tab)
           (if is-down?
-            (do (rich-config/run-command cfg !state (if is-shift? :outdent :indent))
+            (do (if-let [indent! (get-in cfg [:block-ops :indent-selection!])]
+                  (indent! !state (if is-shift? -1 1))
+                  (rich-config/run-command cfg !state (if is-shift? :outdent :indent)))
                 m.KeyEventResult/handled)
             m.KeyEventResult/handled)
 
