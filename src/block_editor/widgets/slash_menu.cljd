@@ -28,7 +28,8 @@
    {:type :blockquote :title "ᠢᠰᠢᠯᠡᠯ" :icon m.Icons/format_quote :keywords ["quote" "q"]}
    {:type :list-item :title "ᠵᠢᠭᠰᠠᠭᠠᠯᠲᠠ" :icon m.Icons/format_list_bulleted :keywords ["list" "bullet"]}
    {:type :task :title "ᠠᠵᠢᠯ" :icon m.Icons/check_box :keywords ["task" "todo" "check"]}
-   {:type :flashcard :title "Flashcard" :icon m.Icons/quiz :keywords ["flashcard" "card" "quiz"]}])
+   {:type :flashcard :title "Flashcard" :icon m.Icons/quiz :keywords ["flashcard" "card" "quiz"]}
+   {:type :table :title "ᠬᠦᠰᠦᠨᠦᠭ" :icon m.Icons/table_chart :keywords ["table" "grid"]}])
 
 (defn- insert-commands
   "Dynamic insert commands — :value-fn evaluated on apply so date/time stays current."

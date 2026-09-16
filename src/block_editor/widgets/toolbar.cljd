@@ -123,6 +123,9 @@
                                               (tx/update-data-op active-id {:content (if is-url? "" current-content)})]
                                         :after-selection nil)))))
 
+                  (toolbar-button m.Icons/table_chart "Table" (= block-type :table)
+                                  #(ops/convert-block! !state active-id :table))
+
                   (toolbar-button m.Icons/horizontal_rule "Divider" (= block-type :divider)
                                   #(ops/convert-block! !state active-id :divider))
 

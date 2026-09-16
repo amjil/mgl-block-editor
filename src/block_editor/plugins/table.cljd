@@ -1,0 +1,372 @@
+(ns block-editor.plugins.table
+  "Mongolian vertical table plugin (V2.0).
+   Native TB-LR grid with editing, insertion, deletion, and zebra striping."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:flutter/services.dart" :as s]
+            ["package:mongol/mongol.dart" :as mgl]
+            [cljd.flutter :as f]
+            [rich-editor.commands.editor-commands :as editor-cmd]
+            [rich-editor.commands.transaction :as tx]))
+
+(def ^:private default-col-width 64.0)
+(def ^:private default-row-height 160.0)
+
+(def ^:private default-table-data
+  {:col-count 2
+   :row-count 2
+   :cells {"0,0" "ᠲᠡᠷᠢᠭᠦᠨ"
+           "0,1" "ᠳᠡᠳ᠋"
+           "1,0" "ᠥᠭᠭᠦᠭᠳᠡᠯ 1"
+           "1,1" "ᠥᠭᠭᠦᠭᠳᠡᠯ 2"}})
+
+(defn- cell-key [c r]
+  (str c "," r))
+
+(defn- commit-data! [!state block-id data]
+  (tx/commit-transaction!
+   !state
+   (tx/make-transaction
+    :ops [(tx/update-data-op block-id data)]
+    :after-selection nil)))
+
+(defn- update-cell! [!state block-id data c r text]
+  (let [cells (or (:cells data) {})
+        new-cells (if (empty? text)
+                    (dissoc cells (cell-key c r))
+                    (assoc cells (cell-key c r) text))]
+    (tx/commit-transaction!
+     !state
+     (tx/make-transaction
+      :ops [(tx/update-data-op block-id (assoc data :cells new-cells))]
+      :after-selection nil)
+     :merge? true)))
+
+(defn- clear-cell! [!state block-id data c r]
+  (update-cell! !state block-id data c r ""))
+
+(defn- insert-col! [!state block-id data target-c after?]
+  (let [insert-idx (if after? (inc target-c) target-c)
+        cols (get data :col-count 2)
+        rows (get data :row-count 2)
+        new-cols (inc cols)
+        new-cells
+        (reduce
+         (fn [acc c]
+           (reduce
+            (fn [cells r]
+              (if (= c insert-idx)
+                cells
+                (let [source-c (if (> c insert-idx) (dec c) c)]
+                  (if-let [value (get-in data [:cells (cell-key source-c r)])]
+                    (assoc cells (cell-key c r) value)
+                    cells))))
+            acc
+            (range rows)))
+         {}
+         (range new-cols))]
+    (commit-data! !state block-id
+                  (assoc data :col-count new-cols :cells new-cells))))
+
+(defn- insert-row! [!state block-id data target-r after?]
+  (let [insert-idx (if after? (inc target-r) target-r)
+        cols (get data :col-count 2)
+        rows (get data :row-count 2)
+        new-rows (inc rows)
+        new-cells
+        (reduce
+         (fn [acc r]
+           (reduce
+            (fn [cells c]
+              (if (= r insert-idx)
+                cells
+                (let [source-r (if (> r insert-idx) (dec r) r)]
+                  (if-let [value (get-in data [:cells (cell-key c source-r)])]
+                    (assoc cells (cell-key c r) value)
+                    cells))))
+            acc
+            (range cols)))
+         {}
+         (range new-rows))]
+    (commit-data! !state block-id
+                  (assoc data :row-count new-rows :cells new-cells))))
+
+(defn- delete-col! [!state block-id data target-c]
+  (let [cols (get data :col-count 2)
+        rows (get data :row-count 2)]
+    (when (> cols 1)
+      (let [new-cols (dec cols)
+            new-cells
+            (reduce
+             (fn [acc c]
+               (reduce
+                (fn [cells r]
+                  (let [source-c (if (>= c target-c) (inc c) c)]
+                    (if-let [value (get-in data [:cells (cell-key source-c r)])]
+                      (assoc cells (cell-key c r) value)
+                      cells)))
+                acc
+                (range rows)))
+             {}
+             (range new-cols))]
+        (commit-data! !state block-id
+                      (assoc data :col-count new-cols :cells new-cells))))))
+
+(defn- delete-row! [!state block-id data target-r]
+  (let [cols (get data :col-count 2)
+        rows (get data :row-count 2)]
+    (when (> rows 1)
+      (let [new-rows (dec rows)
+            new-cells
+            (reduce
+             (fn [acc r]
+               (reduce
+                (fn [cells c]
+                  (let [source-r (if (>= r target-r) (inc r) r)]
+                    (if-let [value (get-in data [:cells (cell-key c source-r)])]
+                      (assoc cells (cell-key c r) value)
+                      cells)))
+                acc
+                (range cols)))
+             {}
+             (range new-rows))]
+        (commit-data! !state block-id
+                      (assoc data :row-count new-rows :cells new-cells))))))
+
+(defn- cell-context-menu [ctx !state block-id data c r]
+  (let [color-scheme (.-colorScheme (m/Theme.of ctx))]
+    (m/showModalBottomSheet
+     .context ctx
+     .backgroundColor (.-surface color-scheme)
+     .isScrollControlled true
+     .builder
+     (fn [sheet-ctx]
+       (let [nav (m/Navigator.of sheet-ctx)
+             menu-item
+             (fn [icon title color action]
+               (m/ListTile
+                .leading (m/Icon icon .color color)
+                .title (m/Text title
+                               .style (m/TextStyle
+                                       .color (.-onSurface color-scheme)))
+                .onTap (fn []
+                         (.pop nav)
+                         (action))))]
+         (m/SafeArea
+          .child
+          (m/SingleChildScrollView
+           .child
+           (m/Column
+            .mainAxisSize m.MainAxisSize/min
+            .children
+            [(menu-item m.Icons/keyboard_arrow_left
+                        "Урд багана нэмэх (Insert Col Left)"
+                        m.Colors/blue
+                        #(insert-col! !state block-id data c false))
+             (menu-item m.Icons/keyboard_arrow_right
+                        "Хойно багана нэмэх (Insert Col Right)"
+                        m.Colors/blue
+                        #(insert-col! !state block-id data c true))
+             (menu-item m.Icons/view_column
+                        "Багана устгах (Delete Col)"
+                        m.Colors/red
+                        #(delete-col! !state block-id data c))
+             (m/Divider)
+             (menu-item m.Icons/keyboard_arrow_up
+                        "Дээр мөр нэмэх (Insert Row Above)"
+                        m.Colors/green
+                        #(insert-row! !state block-id data r false))
+             (menu-item m.Icons/keyboard_arrow_down
+                        "Доор мөр нэмэх (Insert Row Below)"
+                        m.Colors/green
+                        #(insert-row! !state block-id data r true))
+             (menu-item m.Icons/table_rows
+                        "Мөр устгах (Delete Row)"
+                        m.Colors/red
+                        #(delete-row! !state block-id data r))
+             (m/Divider)
+             (menu-item m.Icons/backspace
+                        "Цэвэрлэх (Clear Cell)"
+                        m.Colors/orange
+                        #(clear-cell! !state block-id data c r))]))))))))
+
+(defn- edit-cell-dialog [ctx !state block-id data c r current-text]
+  (m/showDialog
+   .context ctx
+   .builder
+   (fn [dialog-ctx]
+     (f/widget
+      :managed [ctrl (m/TextEditingController .text (or current-text ""))]
+      (let [color-scheme (.-colorScheme (m/Theme.of dialog-ctx))
+            save! (fn []
+                    (update-cell! !state block-id data c r (.-text ctrl))
+                    (.pop (m/Navigator.of dialog-ctx)))]
+        (m/AlertDialog
+         .title (m/Text "Edit Cell (Cmd/Ctrl+Enter to save)"
+                        .style (m/TextStyle
+                                .fontSize 14.0
+                                .color (.-onSurface color-scheme)))
+         .backgroundColor (.-surface color-scheme)
+         .content
+         (m/SizedBox
+          .height 280.0
+          .width 120.0
+          .child
+          (m/CallbackShortcuts
+           .bindings
+           {(m/SingleActivator s.LogicalKeyboardKey/enter .control true) save!
+            (m/SingleActivator s.LogicalKeyboardKey/enter .meta true) save!}
+           .child
+           (mgl/MongolTextField
+            .controller ctrl
+            .autofocus true
+            .maxLines nil
+            .style (m/TextStyle
+                    .color (.-onSurface color-scheme)
+                    .fontFamily "OyunQaganTig")
+            .decoration (m/InputDecoration
+                         .hintText "Бичих..."
+                         .border (m/OutlineInputBorder.)))))
+         .actions
+         [(m/TextButton
+           .onPressed #(.pop (m/Navigator.of dialog-ctx))
+           .child (m/Text "Cancel"))
+          (m/ElevatedButton
+           .onPressed save!
+           .child (m/Text "Save"))]))))))
+
+(defn- cell-widget [!state block-id data c r header? active? ctx]
+  (let [text (get-in data [:cells (cell-key c r)] "")
+        empty-cell? (empty? text)
+        color-scheme (.-colorScheme (m/Theme.of ctx))
+        bg-color (cond
+                   header? (-> (.-primary color-scheme) (.withOpacity 0.12))
+                   (even? c) (.-surface color-scheme)
+                   :else (-> (.-onSurface color-scheme) (.withOpacity 0.03)))
+        border-color (-> (.-onSurface color-scheme) (.withOpacity 0.15))]
+    (m/GestureDetector
+     .behavior m.HitTestBehavior/opaque
+     .onTap (fn []
+              (when active?
+                (edit-cell-dialog ctx !state block-id data c r text)))
+     .onLongPress (fn []
+                    (when active?
+                      (cell-context-menu ctx !state block-id data c r)))
+     .child
+     (m/Container
+      .width default-col-width
+      .height default-row-height
+      .decoration (m/BoxDecoration
+                   .color bg-color
+                   .border (m/Border.all .color border-color .width 0.5))
+      .padding (m/EdgeInsets.symmetric .horizontal 6.0 .vertical 12.0)
+      .alignment m.Alignment/topCenter
+      .child
+      (if empty-cell?
+        (m/Icon m.Icons/add
+                .size 16.0
+                .color (-> (.-onSurface color-scheme) (.withOpacity 0.2)))
+        (mgl/MongolText
+         text
+         .style (m/TextStyle
+                 .fontWeight (if header? m.FontWeight/bold m.FontWeight/normal)
+                 .fontSize 14.0
+                 .color (.-onSurface color-scheme)
+                 .fontFamily "OyunQaganTig")
+         .maxLines 2
+         .overflow m.TextOverflow/ellipsis))))))
+
+(defn- table-grid-ui [!state block-id data active? ctx]
+  (let [cols (get data :col-count 2)
+        rows (get data :row-count 2)
+        color-scheme (.-colorScheme (m/Theme.of ctx))
+        button-color (-> (.-onSurface color-scheme) (.withOpacity 0.05))
+        icon-color (-> (.-onSurface color-scheme) (.withOpacity 0.4))]
+    (m/Row
+     .crossAxisAlignment m.CrossAxisAlignment/start
+     .mainAxisSize m.MainAxisSize/min
+     .children
+     [(m/Column
+       .crossAxisAlignment m.CrossAxisAlignment/start
+       .mainAxisSize m.MainAxisSize/min
+       .children
+       [(m/Row
+         .crossAxisAlignment m.CrossAxisAlignment/start
+         .mainAxisSize m.MainAxisSize/min
+         .children
+         (vec
+          (for [c (range cols)]
+            (m/Column
+             .mainAxisSize m.MainAxisSize/min
+             .children
+             (vec
+              (for [r (range rows)]
+                (cell-widget !state block-id data c r (= c 0) active? ctx)))))))
+        (if active?
+          (m/InkWell
+           .onTap #(insert-row! !state block-id data (dec rows) true)
+           .child
+           (m/Container
+            .height 32.0
+            .width (* cols default-col-width)
+            .color button-color
+            .child (m/Icon m.Icons/add .color icon-color .size 20.0)))
+          (m/SizedBox.shrink))])
+      (if active?
+        (m/InkWell
+         .onTap #(insert-col! !state block-id data (dec cols) true)
+         .child
+         (m/Container
+          .width 32.0
+          .height (* rows default-row-height)
+          .color button-color
+          .child (m/Icon m.Icons/add .color icon-color .size 20.0)))
+        (m/SizedBox.shrink))])))
+
+(defn- table-frame [!state block-id data active? ctx]
+  (let [color-scheme (.-colorScheme (m/Theme.of ctx))]
+    (m/Container
+     .margin (m/EdgeInsets.only .bottom 16.0 .right 8.0)
+     .decoration (m/BoxDecoration
+                  .color (.-surface color-scheme)
+                  .borderRadius (m/BorderRadius.circular 4.0)
+                  .border
+                  (m/Border.all
+                   .color (-> (.-onSurface color-scheme) (.withOpacity 0.2))
+                   .width 1.0))
+     .clipBehavior m.Clip/antiAlias
+     .child
+     (m/SingleChildScrollView
+      .scrollDirection m.Axis/horizontal
+      .child
+      (m/SingleChildScrollView
+       .scrollDirection m.Axis/vertical
+       .child (table-grid-ui !state block-id data active? ctx))))))
+
+(defn- render-table-edit [id !state _index _cfg]
+  (f/widget
+   :watch [snap (f/$ (let [state (f/<! !state)]
+                       {:block (get-in state [:blocks id])
+                        :active? (= id (:active-block-id state))}))]
+   (m/Builder
+    .builder
+    (fn [^m/BuildContext ctx]
+      (let [block (:block snap)
+            data (if (seq (:data block)) (:data block) default-table-data)]
+        (m/GestureDetector
+         .onTap #(editor-cmd/focus-block !state id 0)
+         .child (table-frame !state id data (:active? snap) ctx)))))))
+
+(defn- render-table-read [block _base-style _on-link-tap !state]
+  (m/Builder
+   .builder
+   (fn [^m/BuildContext ctx]
+     (let [data (if (seq (:data block)) (:data block) default-table-data)]
+       (table-frame !state (:id block) data false ctx)))))
+
+(defn table-plugin
+  "Mongolian native atomic table block."
+  []
+  {:type :table
+   :text-block-type? false
+   :render render-table-edit
+   :render-read render-table-read})

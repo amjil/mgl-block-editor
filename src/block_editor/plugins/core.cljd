@@ -17,7 +17,8 @@
             [block-editor.plugins.callout :as callout]
             [block-editor.plugins.bookmark :as bookmark]
             [block-editor.plugins.toggle :as toggle]
-            [block-editor.plugins.flashcard :as flashcard]))
+            [block-editor.plugins.flashcard :as flashcard]
+            [block-editor.plugins.table :as table]))
 
 (def task-plugin task/task-plugin)
 (def blockquote-plugin blockquote/blockquote-plugin)
@@ -29,6 +30,7 @@
 (def bookmark-plugin bookmark/bookmark-plugin)
 (def toggle-plugin toggle/toggle-plugin)
 (def flashcard-plugin flashcard/flashcard-plugin)
+(def table-plugin table/table-plugin)
 
 (defn default-plugins
   "Built-in plugins merged by `build-config` (user plugins override by :type)."
@@ -42,4 +44,5 @@
    (callout/callout-plugin)
    (bookmark/bookmark-plugin)
    (toggle/toggle-plugin)
-   (flashcard/flashcard-plugin)])
+   (flashcard/flashcard-plugin)
+   (table/table-plugin)])
