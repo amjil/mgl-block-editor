@@ -1,6 +1,7 @@
 (ns block-editor.plugins.table
-  "Mongolian vertical table plugin (V2.0).
-   Native TB-LR grid with editing, insertion, deletion, and zebra striping."
+  "Mongolian Vertical Table Plugin (V3.0: Ultimate In-Place Edit).
+   Features seamless inline textfields, Tab-key navigation across cells,
+   auto-save on blur, and rich context menus for structural operations."
   (:require ["package:flutter/material.dart" :as m]
             ["package:flutter/services.dart" :as s]
             ["package:mongol/mongol.dart" :as mgl]
@@ -29,23 +30,31 @@
     :ops [(tx/update-data-op block-id data)]
     :after-selection nil)))
 
-(defn- update-cell! [!state block-id data c r text]
-  (let [cells (or (:cells data) {})
-        new-cells (if (empty? text)
-                    (dissoc cells (cell-key c r))
-                    (assoc cells (cell-key c r) text))]
-    (tx/commit-transaction!
-     !state
-     (tx/make-transaction
-      :ops [(tx/update-data-op block-id (assoc data :cells new-cells))]
-      :after-selection nil)
-     :merge? true)))
+(defn- save-cell-text!
+  "Save against the latest table state so an edit cannot overwrite a structural change."
+  [!state block-id c r text]
+  (let [data (or (get-in @!state [:blocks block-id :data])
+                 default-table-data)
+        cells (or (:cells data) {})
+        key (cell-key c r)]
+    (when (not= (get cells key "") text)
+      (let [new-cells (if (empty? text)
+                        (dissoc cells key)
+                        (assoc cells key text))]
+        (tx/commit-transaction!
+         !state
+         (tx/make-transaction
+          :ops [(tx/update-data-op block-id (assoc data :cells new-cells))]
+          :after-selection nil)
+         :merge? true)))))
 
-(defn- clear-cell! [!state block-id data c r]
-  (update-cell! !state block-id data c r ""))
+(defn- clear-cell! [!state block-id c r]
+  (save-cell-text! !state block-id c r ""))
 
-(defn- insert-col! [!state block-id data target-c after?]
-  (let [insert-idx (if after? (inc target-c) target-c)
+(defn- insert-col! [!state block-id target-c after?]
+  (let [data (or (get-in @!state [:blocks block-id :data])
+                 default-table-data)
+        insert-idx (if after? (inc target-c) target-c)
         cols (get data :col-count 2)
         rows (get data :row-count 2)
         new-cols (inc cols)
@@ -67,8 +76,10 @@
     (commit-data! !state block-id
                   (assoc data :col-count new-cols :cells new-cells))))
 
-(defn- insert-row! [!state block-id data target-r after?]
-  (let [insert-idx (if after? (inc target-r) target-r)
+(defn- insert-row! [!state block-id target-r after?]
+  (let [data (or (get-in @!state [:blocks block-id :data])
+                 default-table-data)
+        insert-idx (if after? (inc target-r) target-r)
         cols (get data :col-count 2)
         rows (get data :row-count 2)
         new-rows (inc rows)
@@ -90,8 +101,10 @@
     (commit-data! !state block-id
                   (assoc data :row-count new-rows :cells new-cells))))
 
-(defn- delete-col! [!state block-id data target-c]
-  (let [cols (get data :col-count 2)
+(defn- delete-col! [!state block-id target-c]
+  (let [data (or (get-in @!state [:blocks block-id :data])
+                 default-table-data)
+        cols (get data :col-count 2)
         rows (get data :row-count 2)]
     (when (> cols 1)
       (let [new-cols (dec cols)
@@ -111,8 +124,10 @@
         (commit-data! !state block-id
                       (assoc data :col-count new-cols :cells new-cells))))))
 
-(defn- delete-row! [!state block-id data target-r]
-  (let [cols (get data :col-count 2)
+(defn- delete-row! [!state block-id target-r]
+  (let [data (or (get-in @!state [:blocks block-id :data])
+                 default-table-data)
+        cols (get data :col-count 2)
         rows (get data :row-count 2)]
     (when (> rows 1)
       (let [new-rows (dec rows)
@@ -132,8 +147,10 @@
         (commit-data! !state block-id
                       (assoc data :row-count new-rows :cells new-cells))))))
 
-(defn- cell-context-menu [ctx !state block-id data c r]
+(defn- cell-context-menu [ctx !state block-id c r !editing-cell]
   (let [color-scheme (.-colorScheme (m/Theme.of ctx))]
+    ;; Closing the editor first runs its dispose hook and persists the latest text.
+    (reset! !editing-cell nil)
     (m/showModalBottomSheet
      .context ctx
      .backgroundColor (.-surface color-scheme)
@@ -161,121 +178,159 @@
             [(menu-item m.Icons/keyboard_arrow_left
                         "Урд багана нэмэх (Insert Col Left)"
                         m.Colors/blue
-                        #(insert-col! !state block-id data c false))
+                        #(insert-col! !state block-id c false))
              (menu-item m.Icons/keyboard_arrow_right
                         "Хойно багана нэмэх (Insert Col Right)"
                         m.Colors/blue
-                        #(insert-col! !state block-id data c true))
+                        #(insert-col! !state block-id c true))
              (menu-item m.Icons/view_column
                         "Багана устгах (Delete Col)"
                         m.Colors/red
-                        #(delete-col! !state block-id data c))
+                        #(delete-col! !state block-id c))
              (m/Divider)
              (menu-item m.Icons/keyboard_arrow_up
                         "Дээр мөр нэмэх (Insert Row Above)"
                         m.Colors/green
-                        #(insert-row! !state block-id data r false))
+                        #(insert-row! !state block-id r false))
              (menu-item m.Icons/keyboard_arrow_down
                         "Доор мөр нэмэх (Insert Row Below)"
                         m.Colors/green
-                        #(insert-row! !state block-id data r true))
+                        #(insert-row! !state block-id r true))
              (menu-item m.Icons/table_rows
                         "Мөр устгах (Delete Row)"
                         m.Colors/red
-                        #(delete-row! !state block-id data r))
+                        #(delete-row! !state block-id r))
              (m/Divider)
              (menu-item m.Icons/backspace
                         "Цэвэрлэх (Clear Cell)"
                         m.Colors/orange
-                        #(clear-cell! !state block-id data c r))]))))))))
+                        #(clear-cell! !state block-id c r))]))))))))
 
-(defn- edit-cell-dialog [ctx !state block-id data c r current-text]
-  (m/showDialog
-   .context ctx
-   .builder
-   (fn [dialog-ctx]
-     (f/widget
-      :managed [ctrl (m/TextEditingController .text (or current-text ""))]
-      (let [color-scheme (.-colorScheme (m/Theme.of dialog-ctx))
-            save! (fn []
-                    (update-cell! !state block-id data c r (.-text ctrl))
-                    (.pop (m/Navigator.of dialog-ctx)))]
-        (m/AlertDialog
-         .title (m/Text "Edit Cell (Cmd/Ctrl+Enter to save)"
-                        .style (m/TextStyle
-                                .fontSize 14.0
-                                .color (.-onSurface color-scheme)))
-         .backgroundColor (.-surface color-scheme)
-         .content
-         (m/SizedBox
-          .height 280.0
-          .width 120.0
-          .child
-          (m/CallbackShortcuts
-           .bindings
-           {(m/SingleActivator s.LogicalKeyboardKey/enter .control true) save!
-            (m/SingleActivator s.LogicalKeyboardKey/enter .meta true) save!}
-           .child
-           (mgl/MongolTextField
-            .controller ctrl
-            .autofocus true
-            .maxLines nil
-            .style (m/TextStyle
-                    .color (.-onSurface color-scheme)
-                    .fontFamily "OyunQaganTig")
-            .decoration (m/InputDecoration
-                         .hintText "Бичих..."
-                         .border (m/OutlineInputBorder.)))))
-         .actions
-         [(m/TextButton
-           .onPressed #(.pop (m/Navigator.of dialog-ctx))
-           .child (m/Text "Cancel"))
-          (m/ElevatedButton
-           .onPressed save!
-           .child (m/Text "Save"))]))))))
-
-(defn- cell-widget [!state block-id data c r header? active? ctx]
-  (let [text (get-in data [:cells (cell-key c r)] "")
-        empty-cell? (empty? text)
-        color-scheme (.-colorScheme (m/Theme.of ctx))
-        bg-color (cond
-                   header? (-> (.-primary color-scheme) (.withOpacity 0.12))
-                   (even? c) (.-surface color-scheme)
-                   :else (-> (.-onSurface color-scheme) (.withOpacity 0.03)))
-        border-color (-> (.-onSurface color-scheme) (.withOpacity 0.15))]
-    (m/GestureDetector
-     .behavior m.HitTestBehavior/opaque
-     .onTap (fn []
-              (when active?
-                (edit-cell-dialog ctx !state block-id data c r text)))
-     .onLongPress (fn []
-                    (when active?
-                      (cell-context-menu ctx !state block-id data c r)))
-     .child
+(defn- cell-widget
+  [!state block-id data c r header? active? ctx !editing-cell cols rows]
+  (f/widget
+   :watch [editing-cell !editing-cell]
+   (let [editing? (and active? (= editing-cell [c r]))
+         text (get-in data [:cells (cell-key c r)] "")
+         color-scheme (.-colorScheme (m/Theme.of ctx))
+         bg-color (cond
+                    header? (-> (.-primary color-scheme) (.withOpacity 0.12))
+                    (even? c) (.-surface color-scheme)
+                    :else (-> (.-onSurface color-scheme) (.withOpacity 0.03)))
+         border-color (if editing?
+                        (.-primary color-scheme)
+                        (-> (.-onSurface color-scheme) (.withOpacity 0.15)))
+         dispose-ctrl!
+         (fn [^m/TextEditingController tec]
+           (save-cell-text! !state block-id c r (.-text tec))
+           (.dispose tec))]
      (m/Container
       .width default-col-width
       .height default-row-height
-      .decoration (m/BoxDecoration
-                   .color bg-color
-                   .border (m/Border.all .color border-color .width 0.5))
+      .decoration
+      (m/BoxDecoration
+       .color bg-color
+       .border (m/Border.all
+                .color border-color
+                .width (if editing? 2.0 0.5)))
       .padding (m/EdgeInsets.symmetric .horizontal 6.0 .vertical 12.0)
       .alignment m.Alignment/topCenter
       .child
-      (if empty-cell?
-        (m/Icon m.Icons/add
-                .size 16.0
-                .color (-> (.-onSurface color-scheme) (.withOpacity 0.2)))
-        (mgl/MongolText
-         text
-         .style (m/TextStyle
-                 .fontWeight (if header? m.FontWeight/bold m.FontWeight/normal)
-                 .fontSize 14.0
-                 .color (.-onSurface color-scheme)
-                 .fontFamily "OyunQaganTig")
-         .maxLines 2
-         .overflow m.TextOverflow/ellipsis))))))
+      (if editing?
+        (f/widget
+         :managed [ctrl (let [tec (m/TextEditingController .text text)]
+                          (set! (.-selection tec)
+                                (m/TextSelection.collapsed
+                                 .offset (count text)))
+                          tec)
+                   :dispose dispose-ctrl!
+                   focus-node (m/FocusNode)]
+         :let [focus-listener
+               (fn []
+                 (when (and (not (.-hasFocus focus-node))
+                            (= @!editing-cell [c r]))
+                   (save-cell-text! !state block-id c r (.-text ctrl))
+                   (reset! !editing-cell nil)))
+               dispose-focus-listener!
+               (fn [listener]
+                 (.removeListener focus-node listener))]
+         :managed [_focus-listener
+                   (do
+                     (.addListener focus-node focus-listener)
+                     (m/WidgetsBinding.instance.addPostFrameCallback
+                      (fn [_]
+                        (when (= @!editing-cell [c r])
+                          (.requestFocus focus-node))))
+                     focus-listener)
+                   :dispose dispose-focus-listener!]
+         (m/CallbackShortcuts
+          .bindings
+          {(m/SingleActivator s.LogicalKeyboardKey/tab)
+           (fn []
+             (save-cell-text! !state block-id c r (.-text ctrl))
+             (if (and (= c (dec cols)) (= r (dec rows)))
+               (reset! !editing-cell nil)
+               (let [next-c (if (< c (dec cols)) (inc c) 0)
+                     next-r (if (= next-c 0) (inc r) r)]
+                 (reset! !editing-cell [next-c next-r]))))
+           (m/SingleActivator s.LogicalKeyboardKey/enter .meta true)
+           (fn []
+             (save-cell-text! !state block-id c r (.-text ctrl))
+             (reset! !editing-cell nil))
+           (m/SingleActivator s.LogicalKeyboardKey/enter .control true)
+           (fn []
+             (save-cell-text! !state block-id c r (.-text ctrl))
+             (reset! !editing-cell nil))
+           (m/SingleActivator s.LogicalKeyboardKey/escape)
+           (fn []
+             (save-cell-text! !state block-id c r (.-text ctrl))
+             (reset! !editing-cell nil))}
+          .child
+          (mgl/MongolTextField
+           .controller ctrl
+           .focusNode focus-node
+           .autofocus true
+           .maxLines nil
+           .style (m/TextStyle
+                   .fontSize 14.0
+                   .color (.-onSurface color-scheme)
+                   .fontFamily "OyunQaganTig")
+           .decoration (m/InputDecoration
+                        .border m.InputBorder/none
+                        .isDense true
+                        .contentPadding (m/EdgeInsets.all 0.0)))))
+        (m/GestureDetector
+         .behavior m.HitTestBehavior/opaque
+         .onTap (fn []
+                  (when-not active?
+                    (editor-cmd/focus-block !state block-id 0))
+                  (reset! !editing-cell [c r]))
+         .onLongPress
+         (fn []
+           (when active?
+             (cell-context-menu
+              ctx !state block-id c r !editing-cell)))
+         .child
+         (if (empty? text)
+           (m/Center
+            .child
+            (m/Icon m.Icons/add
+                    .size 16.0
+                    .color (-> (.-onSurface color-scheme)
+                               (.withOpacity 0.15))))
+           (mgl/MongolText
+            text
+            .style (m/TextStyle
+                    .fontWeight (if header?
+                                  m.FontWeight/bold
+                                  m.FontWeight/normal)
+                    .fontSize 14.0
+                    .color (.-onSurface color-scheme)
+                    .fontFamily "OyunQaganTig")
+            .maxLines 2
+            .overflow m.TextOverflow/ellipsis))))))))
 
-(defn- table-grid-ui [!state block-id data active? ctx]
+(defn- table-grid-ui [!state block-id data active? ctx !editing-cell]
   (let [cols (get data :col-count 2)
         rows (get data :row-count 2)
         color-scheme (.-colorScheme (m/Theme.of ctx))
@@ -300,10 +355,11 @@
              .children
              (vec
               (for [r (range rows)]
-                (cell-widget !state block-id data c r (= c 0) active? ctx)))))))
+                (cell-widget !state block-id data c r (= c 0) active? ctx
+                             !editing-cell cols rows)))))))
         (if active?
           (m/InkWell
-           .onTap #(insert-row! !state block-id data (dec rows) true)
+           .onTap #(insert-row! !state block-id (dec rows) true)
            .child
            (m/Container
             .height 32.0
@@ -313,7 +369,7 @@
           (m/SizedBox.shrink))])
       (if active?
         (m/InkWell
-         .onTap #(insert-col! !state block-id data (dec cols) true)
+         .onTap #(insert-col! !state block-id (dec cols) true)
          .child
          (m/Container
           .width 32.0
@@ -322,7 +378,7 @@
           .child (m/Icon m.Icons/add .color icon-color .size 20.0)))
         (m/SizedBox.shrink))])))
 
-(defn- table-frame [!state block-id data active? ctx]
+(defn- table-frame [!state block-id data active? ctx !editing-cell]
   (let [color-scheme (.-colorScheme (m/Theme.of ctx))]
     (m/Container
      .margin (m/EdgeInsets.only .bottom 16.0 .right 8.0)
@@ -340,10 +396,12 @@
       .child
       (m/SingleChildScrollView
        .scrollDirection m.Axis/vertical
-       .child (table-grid-ui !state block-id data active? ctx))))))
+       .child (table-grid-ui !state block-id data active? ctx
+                             !editing-cell))))))
 
 (defn- render-table-edit [id !state _index _cfg]
   (f/widget
+   :managed [!editing-cell (atom nil) :dispose nil]
    :watch [snap (f/$ (let [state (f/<! !state)]
                        {:block (get-in state [:blocks id])
                         :active? (= id (:active-block-id state))}))]
@@ -352,19 +410,20 @@
     (fn [^m/BuildContext ctx]
       (let [block (:block snap)
             data (if (seq (:data block)) (:data block) default-table-data)]
-        (m/GestureDetector
-         .onTap #(editor-cmd/focus-block !state id 0)
-         .child (table-frame !state id data (:active? snap) ctx)))))))
+        (table-frame !state id data (:active? snap) ctx
+                     !editing-cell))))))
 
 (defn- render-table-read [block _base-style _on-link-tap !state]
-  (m/Builder
-   .builder
-   (fn [^m/BuildContext ctx]
-     (let [data (if (seq (:data block)) (:data block) default-table-data)]
-       (table-frame !state (:id block) data false ctx)))))
+  (f/widget
+   :managed [!editing-cell (atom nil) :dispose nil]
+   (m/Builder
+    .builder
+    (fn [^m/BuildContext ctx]
+      (let [data (if (seq (:data block)) (:data block) default-table-data)]
+        (table-frame !state (:id block) data false ctx !editing-cell))))))
 
 (defn table-plugin
-  "Mongolian native atomic table block."
+  "Mongolian native table block with seamless in-place editing."
   []
   {:type :table
    :text-block-type? false
