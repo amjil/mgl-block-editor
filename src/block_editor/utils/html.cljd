@@ -166,6 +166,25 @@
                (when (seq alt) (str " alt=\"" (escape-html alt) "\""))
                ">")))
 
+      ;; Export the Mongolian TB-LR grid as a standard semantic HTML table.
+      :table
+      (let [data (or (:data block) {})
+            cols (get data :col-count 2)
+            rows (get data :row-count 2)
+            cells (get data :cells {})
+            rows-html (apply str
+                             (for [r (range rows)]
+                               (str "<tr>"
+                                    (apply str
+                                           (for [c (range cols)]
+                                             (let [text (get cells (str c "," r) "")
+                                                   html-text (-> text escape-html (str/replace "\n" "<br>"))
+                                                   tag (if (zero? c) "th" "td")]
+                                               (str "<" tag ">" html-text "</" tag ">"))))
+                                    "</tr>")))]
+        (nest-children (str "<table class=\"block-table\"><tbody>" rows-html "</tbody></table>")
+                       blocks child-ids opts))
+
       :heading-1
       (nest-children (str "<h1>" inner "</h1>") blocks child-ids opts)
 
@@ -544,6 +563,39 @@
                               []
                               (when (seq url) {:url url}))]
         {:ids [id] :blocks {id block}})
+
+      ;; Parse an external HTML table into the editor's grid data model.
+      (= "table" tag)
+      (let [id (new-block-id)
+            kids (element-children el)
+            group-kids (mapcat element-children
+                               (filter #(#{"tbody" "thead"} (tag-name %)) kids))
+            trs (vec (concat (filter #(= "tr" (tag-name %)) kids)
+                             (filter #(= "tr" (tag-name %)) group-kids)))
+            row-count (count trs)
+            col-count-atom (atom 0)
+            cells-atom (atom {})]
+        (doseq [r (range row-count)]
+          (let [tr (nth trs r)
+                tds (vec (filter #(#{"td" "th"} (tag-name %))
+                                 (element-children tr)))]
+            (swap! col-count-atom max (count tds))
+            (doseq [c (range (count tds))]
+              (let [td (nth tds c)
+                    ;; parse-inline restores <br> elements as newline characters.
+                    cell-text (:content (parse-inline (child-nodes td) opts))]
+                (when (not-empty cell-text)
+                  (swap! cells-atom assoc (str c "," r) cell-text))))))
+        (let [final-cols (max 1 @col-count-atom)
+              final-rows (max 1 row-count)
+              data {:col-count final-cols
+                    :row-count final-rows
+                    :cells @cells-atom}
+              block (make-block id :table parent-id
+                                {:content "" :content-spans []}
+                                []
+                                data)]
+          {:ids [id] :blocks {id block}}))
 
       (= "hr" tag)
       (let [id (new-block-id)]

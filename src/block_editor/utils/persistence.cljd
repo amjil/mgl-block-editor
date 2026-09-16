@@ -51,6 +51,20 @@
     (nil? id) nil
     :else (str id)))
 
+(defn- restore-block-data
+  "Restore data keys whose string identity is significant.
+   Table cell coordinates are JSON object keys such as \"0,0\"; the generic
+   decoder keywordizes map keys, while the table plugin looks them up as strings."
+  [block-type data]
+  (if (and (= block-type :table) (map? (:cells data)))
+    (update data :cells
+            (fn [cells]
+              (reduce-kv (fn [acc k value]
+                           (assoc acc (if (keyword? k) (name k) (str k)) value))
+                         {}
+                         cells)))
+    data))
+
 (defn- assign-parents
   "Set `:parent` on every reachable block from `:root` / `:children`.
    Top-level blocks get `:root`. Tree structure overwrites any stale pointer."
@@ -131,10 +145,12 @@
           (reduce-kv
            (fn [acc id-kw block]
              ;; Block ID must be String "b-xxx"; type must be Keyword :paragraph
-             (let [id-str (as-block-id id-kw)]
+             (let [id-str (as-block-id id-kw)
+                   block-type (keyword (:type block))]
                (assoc acc id-str
                       (-> block
-                          (update :type keyword)
+                          (assoc :type block-type)
+                          (update :data #(restore-block-data block-type %))
                           (assoc :id id-str)
                           (update :children #(mapv as-block-id (or % [])))
                           (cond-> (contains? block :collapsed?)
